@@ -1,0 +1,27 @@
+# Python 生成物
+__pycache__/
+*.py[cod]
+
+# プロジェクト内の検証用 venv
+.venv/
+
+# 処理が一時的に使うフォルダー・ファイル（出力先内に作られる / 検証スクリプトの作業場）
+# 分割: .pdf_split_* / 結合: .pdf_merge_* / リネーム: .pdf_rename_* と .pdf_rename_tmp_*
+.pdf_split_*/
+.pdf_merge_*/
+.pdf_rename_*/
+.pdf_rename_tmp_*
+
+# テスト・検証が一時的に作る出力（通常はテンポラリ。万一リポジトリ内に出た場合の安全策）
+out/
+output/
+
+# 配布用パッケージ（tools/make_dist.py で再生成できる。zip と受け取り用フォルダーは管理しない）
+dist/
+
+# 実装・検証以外の作業場（ツール本体ではないため git 管理外）
+blog/
+
+# エディター・OS
+.vscode/
+Thumbs.db

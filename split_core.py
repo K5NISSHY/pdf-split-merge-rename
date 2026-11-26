@@ -9,10 +9,7 @@ Excel読み取り・ファイル名検証・PDF読み込み・一時書き出し
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -20,6 +17,8 @@ from typing import Callable, Sequence
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from pypdf import PdfReader, PdfWriter
+
+import pathops
 
 INVALID_FILENAME_CHARS = set('<>:"/\\|?*')
 WINDOWS_RESERVED_NAMES = {
@@ -184,28 +183,27 @@ def write_pages(reader: PdfReader, filenames: Sequence[str], output_dir: Path) -
         raise FileExistsError("同名の出力ファイルが既にあります。上書きは行いません。\n" + preview + extra)
 
     created: list[Path] = []
-    staging_dir = Path(tempfile.mkdtemp(prefix=".pdf_split_", dir=output_dir))
+    try:
+        staging_dir = pathops.make_staging_dir(output_dir, ".pdf_split_")
+    except OSError as exc:
+        raise ValueError(f"分割ファイルを保存できませんでした。\n{pathops.describe_os_error(exc, output_dir)}") from exc
     try:
         for page, filename in zip(pages, filenames):
             writer = PdfWriter()
             writer.add_page(page)
             staged = staging_dir / filename
-            with staged.open("xb") as stream:
-                writer.write(stream)
+            pathops.write_exclusive(staged, writer.write)  # 排他作成（既存名へは書かない）
 
         for staged in sorted(staging_dir.glob("*.pdf")):
             destination = output_dir / staged.name
-            os.rename(staged, destination)
+            pathops.move_into(staged, destination)
             created.append(destination)
     except Exception as exc:
         for path in created:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-        raise ValueError(f"分割ファイルを保存できませんでした。\n{exc}") from exc
+            pathops.remove_file(path)
+        raise ValueError(f"分割ファイルを保存できませんでした。\n{pathops.describe_os_error(exc, output_dir)}") from exc
     finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        pathops.remove_tree(staging_dir)
 
     return destinations
 

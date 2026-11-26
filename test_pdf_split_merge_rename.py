@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -21,6 +23,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 import merge_core
 import modes
 import natural_sort
+import pathops
 import preview
 import rename_core
 import split_core
@@ -1054,7 +1057,7 @@ class RenameExecutionTests(RenameDataMixin, unittest.TestCase):
                 raise OSError("名前変更失敗（模擬）")
             return real_rename(src, dst)
 
-        return patch("rename_core.os.rename", side_effect=fake_rename), state
+        return patch("pathops.os.rename", side_effect=fake_rename), state
 
     def test_failure_in_stage_one_rolls_back(self):
         for name in ("001.pdf", "003.pdf", "008.pdf"):
@@ -1158,6 +1161,303 @@ class GuiWordingTests(unittest.TestCase):
         self.assertTrue(hasattr(gui, "main"))
         self.assertEqual(gui.PREVIEW_VISIBLE_ROWS, 12)
         self.assertEqual(gui.STATE_STALE, "入力変更あり: プレビューを更新してください")
+
+
+def os_error(code: int, message: str) -> OSError:
+    """Windowsエラー番号を付けたOSErrorを作る（OSError() は winerror を位置引数で受け取れない）."""
+    exc = OSError(code, message)
+    exc.winerror = code
+    return exc
+
+
+class PathOpsTests(unittest.TestCase):
+    """pathops: ネットワークドライブ（NAS共有）でも同じ操作ができるための補助."""
+
+    def make_pair(self, root: Path) -> tuple[Path, Path]:
+        source = root / "a.pdf"
+        source.write_bytes(b"hello")
+        return source, root / "b.pdf"
+
+    def test_dot_prefix_is_preferred_for_staging_dir(self):
+        with TemporaryDirectory() as temporary:
+            staging = pathops.make_staging_dir(Path(temporary), ".pdf_merge_")
+            try:
+                self.assertTrue(staging.name.startswith(".pdf_merge_"))
+            finally:
+                pathops.remove_tree(staging)
+
+    def test_staging_dir_falls_back_to_tilde_when_dot_is_rejected(self):
+        real_mkdtemp = tempfile.mkdtemp
+
+        def picky_mkdtemp(*args, prefix="", **kwargs):
+            if prefix.startswith("."):
+                raise os_error(22, "このサーバーでは . 始まりの名前が使えません")
+            return real_mkdtemp(*args, prefix=prefix, **kwargs)
+
+        with TemporaryDirectory() as temporary:
+            with patch("tempfile.mkdtemp", side_effect=picky_mkdtemp):
+                staging = pathops.make_staging_dir(Path(temporary), ".pdf_merge_")
+            try:
+                self.assertTrue(staging.name.startswith("~pdf_merge_"))
+                self.assertTrue(staging.is_dir())
+            finally:
+                pathops.remove_tree(staging)
+
+    def test_temp_paths_keep_dot_names_when_server_allows_them(self):
+        with TemporaryDirectory() as temporary:
+            paths = pathops.temp_paths_for(Path(temporary), ".pdf_rename_tmp_", 3)
+        self.assertEqual([path.name for path in paths], [f".pdf_rename_tmp_{n}.tmp" for n in (1, 2, 3)])
+
+    def test_temp_paths_switch_to_tilde_when_dot_names_are_rejected(self):
+        real_open = Path.open
+
+        def picky_open(self, *args, **kwargs):
+            if self.name.startswith("."):
+                raise os_error(22, "このサーバーでは . 始まりの名前が使えません")
+            return real_open(self, *args, **kwargs)
+
+        with TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            with patch.object(Path, "open", picky_open):
+                paths = pathops.temp_paths_for(folder, ".pdf_rename_tmp_", 2)
+            self.assertEqual([path.name for path in paths], ["~pdf_rename_tmp_1.tmp", "~pdf_rename_tmp_2.tmp"])
+            self.assertEqual(list(folder.iterdir()), [])  # 試作ファイルは残さない
+
+    def test_move_into_retries_sharing_violation(self):
+        real_rename = os.rename
+        state = {"calls": 0}
+
+        def flaky_rename(src, dst):
+            state["calls"] += 1
+            if state["calls"] < 3:
+                raise os_error(32, "別のプロセスが使用中です")
+            real_rename(src, dst)
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = self.make_pair(root)
+            with patch("os.rename", side_effect=flaky_rename), patch("pathops.time.sleep") as slept:
+                pathops.move_into(source, destination)
+            self.assertEqual(destination.read_bytes(), b"hello")
+            self.assertFalse(source.exists())
+        self.assertEqual(state["calls"], 3)
+        self.assertEqual(slept.call_count, 2)
+
+    def test_move_into_falls_back_to_copy_when_rename_is_refused(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = self.make_pair(root)
+            always_refused = os_error(32, "この共有では名前変更が使えません")
+            with patch("os.rename", side_effect=always_refused), patch("pathops.time.sleep"):
+                pathops.move_into(source, destination)
+            self.assertEqual(destination.read_bytes(), b"hello")
+            self.assertFalse(source.exists())
+
+    def test_move_into_does_not_retry_ordinary_error(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = self.make_pair(root)
+            with patch("os.rename", side_effect=OSError("模擬的な失敗")) as renamed:
+                with self.assertRaises(OSError):
+                    pathops.move_into(source, destination)
+            self.assertEqual(renamed.call_count, 1)
+            self.assertTrue(source.is_file())
+            self.assertFalse(destination.exists())
+
+    def test_move_into_never_overwrites_existing_destination(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = self.make_pair(root)
+            destination.write_bytes(b"old")
+            always_refused = os_error(32, "この共有では名前変更が使えません")
+            with patch("os.rename", side_effect=always_refused), patch("pathops.time.sleep"):
+                with self.assertRaises(OSError):
+                    pathops.move_into(source, destination)
+            self.assertEqual(destination.read_bytes(), b"old")  # 上書きしていない
+            self.assertTrue(source.is_file())
+
+    def test_write_exclusive_refuses_existing_file(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "a.pdf"
+            path.write_bytes(b"old")
+            with self.assertRaises(FileExistsError):
+                pathops.write_exclusive(path, lambda stream: stream.write(b"new"))
+            self.assertEqual(path.read_bytes(), b"old")
+
+    def test_write_exclusive_writes_content_to_the_end(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "a.pdf"
+            pathops.write_exclusive(path, lambda stream: stream.write(b"0123456789"))
+            self.assertEqual(path.read_bytes(), b"0123456789")
+
+    def test_unc_detection(self):
+        self.assertTrue(pathops.is_unc(Path("//192.168.1.50/PDF/出力")))
+        self.assertTrue(pathops.is_unc(Path("\\\\192.168.1.50\\PDF\\出力")))
+        self.assertFalse(pathops.is_unc(Path("E:/PDF/出力")))
+
+    def test_error_hint_mentions_share_only_for_unc(self):
+        self.assertIn(
+            "ネットワーク上の共有フォルダー",
+            pathops.describe_os_error(os_error(32, "混雑"), Path("//192.168.1.50/PDF")),
+        )
+        self.assertIn("アクセス権", pathops.describe_os_error(os_error(5, "拒否"), Path("E:/PDF")))
+        self.assertEqual(pathops.describe_os_error(OSError("ただの失敗"), Path("E:/PDF")), "ただの失敗")
+
+    def test_temp_name_prefixes_cover_both_forms(self):
+        for name in (".pdf_merge_abc", "~pdf_merge_abc", ".pdf_rename_tmp_1.tmp", "~pdf_rename_tmp_1.tmp", ".pdf_split_x"):
+            self.assertTrue(merge_core.is_temp_name(name), name)
+        self.assertFalse(merge_core.is_temp_name("001.pdf"))
+
+
+class NasLikeServerTests(unittest.TestCase):
+    """「.」始まりの名前を拒否し、名前変更が一時的に失敗する共有を模擬して4機能を実行する."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.pdf = self.root / "input.pdf"
+        make_blank_pdf(self.pdf, 3)
+        self.excel = self.root / "names.xlsx"
+        make_excel(self.excel, {"A1": "報告書", "A2": "資料", "A3": "別紙"})
+        self.out = self.root / "out"
+        self.out.mkdir()
+        self.merge_in = self.root / "merge_in"
+        self.merge_in.mkdir()
+        make_blank_pdf(self.merge_in / "001.pdf", 1)
+        make_blank_pdf(self.merge_in / "002.pdf", 2)
+        self.rename_in = self.root / "rename_in"
+        self.rename_in.mkdir()
+        make_blank_pdf(self.rename_in / "001.pdf", 1)
+        make_blank_pdf(self.rename_in / "002.pdf", 1)
+
+    def handicaps(self):
+        """ドット始まりの名前を拒否し、最初の名前変更を共有違反で失敗させる."""
+        real_mkdtemp = tempfile.mkdtemp
+        real_open = Path.open
+        real_rename = os.rename
+        state = {"renames": 0}
+
+        def picky_mkdtemp(*args, prefix="", **kwargs):
+            if prefix.startswith("."):
+                raise os_error(22, "このサーバーでは . 始まりの名前が使えません")
+            return real_mkdtemp(*args, prefix=prefix, **kwargs)
+
+        def picky_open(self, *args, **kwargs):
+            if self.name.startswith("."):
+                raise os_error(22, "このサーバーでは . 始まりの名前が使えません")
+            return real_open(self, *args, **kwargs)
+
+        def flaky_rename(src, dst):
+            state["renames"] += 1
+            if state["renames"] % 2 == 1:
+                raise os_error(32, "別のプロセスが使用中です")
+            real_rename(src, dst)
+
+        patchers = [
+            patch("tempfile.mkdtemp", side_effect=picky_mkdtemp),
+            patch.object(Path, "open", picky_open),
+            patch("os.rename", side_effect=flaky_rename),
+            patch("pathops.time.sleep"),
+        ]
+        for patcher in patchers:
+            patcher.start()
+        self.addCleanup(lambda: [patcher.stop() for patcher in patchers])
+        return state
+
+    def leftovers(self, folder: Path) -> list[str]:
+        return [path.name for path in folder.iterdir() if merge_core.is_temp_name(path.name)]
+
+    def test_split_on_nas_like_share(self):
+        self.handicaps()
+        results = split_core.split_pdf(
+            self.pdf, self.excel, self.out, "Sheet", "A1",
+            lambda e, s, c, n: modes.build_filenames(modes.BASE_SEQ, e, s, c, n),
+        )
+        self.assertEqual([path.name for path in results], ["報告書_001.pdf", "報告書_002.pdf", "報告書_003.pdf"])
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_merge_on_nas_like_share(self):
+        self.handicaps()
+        saved = merge_core.merge_pdfs(merge_core.build_merge_plan(self.merge_in, "まとめ", self.out))
+        self.assertEqual(saved.name, "まとめ.pdf")
+        self.assertEqual(len(PdfReader(str(saved)).pages), 3)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_rename_on_nas_like_share(self):
+        self.handicaps()
+        items = rename_core.build_rename_plan(self.rename_in, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        rename_core.check_rename_plan(items, self.rename_in)
+        result = rename_core.apply_renames(items)
+        self.assertEqual(result.renamed, 2)
+        self.assertEqual(sorted(path.name for path in self.rename_in.iterdir()), ["報告書_001.pdf", "報告書_002.pdf"])
+        self.assertEqual(self.leftovers(self.rename_in), [])
+
+    def test_previews_on_nas_like_share(self):
+        self.handicaps()
+        self.assertEqual(len(preview.build_preview(self.excel, "Sheet", "A1", modes.BASE_SEQ, self.out, self.pdf)), 3)
+        self.assertEqual(len(preview.build_merge_preview(self.merge_in, "まとめ", self.out)), 2)
+        self.assertEqual(len(preview.build_rename_preview(self.rename_in, self.excel, "Sheet", "A1", modes.BASE_SEQ)), 2)
+
+
+SHARE_TEXT = os.environ.get("PDFSMS_TEST_SHARE", "").strip()
+
+
+@unittest.skipUnless(SHARE_TEXT, "実際の共有フォルダーでの確認は PDFSMS_TEST_SHARE に \\\\server\\share を設定して実行する")
+class NetworkShareTests(unittest.TestCase):
+    """実際のネットワーク共有（NAS）で4機能を実行する確認テスト."""
+
+    def setUp(self):
+        self.root = Path(SHARE_TEXT) / "pdf_split_merge_rename_テスト"
+        if self.root.exists():
+            shutil.rmtree(self.root, ignore_errors=True)
+        self.root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.pdf = self.root / "請求書.pdf"
+        make_blank_pdf(self.pdf, 3)
+        self.excel = self.root / "名前.xlsx"
+        make_excel(self.excel, {"A1": "請求書", "A2": "見積", "A3": "納品"}, sheet_title="請求書")
+        self.out = self.root / "出力"
+        self.out.mkdir()
+        self.merge_in = self.root / "結合入力"
+        self.merge_in.mkdir()
+        make_blank_pdf(self.merge_in / "001.pdf", 1)
+        make_blank_pdf(self.merge_in / "002.pdf", 2)
+        self.rename_in = self.root / "リネーム入力"
+        self.rename_in.mkdir()
+        make_blank_pdf(self.rename_in / "001.pdf", 1)
+        make_blank_pdf(self.rename_in / "002.pdf", 1)
+
+    def leftovers(self, folder: Path) -> list[str]:
+        return [path.name for path in folder.iterdir() if merge_core.is_temp_name(path.name)]
+
+    def test_split_reads_and_writes_on_share(self):
+        results = split_core.split_pdf(
+            self.pdf, self.excel, self.out, "請求書", "A1",
+            lambda e, s, c, n: modes.build_filenames(modes.BASE_SEQ, e, s, c, n),
+        )
+        self.assertEqual([path.name for path in results], ["請求書_001.pdf", "請求書_002.pdf", "請求書_003.pdf"])
+        self.assertTrue(all(path.is_file() for path in results))
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_merge_reads_and_writes_on_share(self):
+        saved = merge_core.merge_pdfs(merge_core.build_merge_plan(self.merge_in, "まとめ", self.out))
+        self.assertTrue(saved.is_file())
+        self.assertEqual(len(PdfReader(str(saved)).pages), 3)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_rename_works_on_share(self):
+        items = rename_core.build_rename_plan(self.rename_in, self.excel, "請求書", "A1", modes.BASE_SEQ)
+        rename_core.check_rename_plan(items, self.rename_in)
+        result = rename_core.apply_renames(items)
+        self.assertEqual(result.renamed, 2)
+        self.assertEqual(sorted(path.name for path in self.rename_in.iterdir()), ["請求書_001.pdf", "請求書_002.pdf"])
+        self.assertEqual(self.leftovers(self.rename_in), [])
+
+    def test_previews_work_on_share(self):
+        self.assertEqual(len(preview.build_preview(self.excel, "請求書", "A1", modes.BASE_SEQ, self.out, self.pdf)), 3)
+        self.assertEqual(len(preview.build_merge_preview(self.merge_in, "まとめ", self.out)), 2)
+        self.assertEqual(len(preview.build_rename_preview(self.rename_in, self.excel, "請求書", "A1", modes.BASE_SEQ)), 2)
 
 
 if __name__ == "__main__":

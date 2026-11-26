@@ -5,16 +5,18 @@
 新名を作り、同じ順序で割り当てる。実行は2段階リネーム
 （①同一フォルダー内の一時名 `.pdf_rename_tmp_<連番>.tmp` へ ②最終名へ）で行い、
 どちらの段階で失敗しても変更済みのファイルをすべて元の名前へ戻してからエラーを出す。
+名前変更は pathops.py 経由で行うため、ネットワークドライブ（NAS共有）では
+一時的な共有違反の再試行や、共有が拒否する名前の代替（`~pdf_rename_tmp_`）を使う。
 PDF・Excelの内容は一切変更せず、名前だけを変える。
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import modes
+import pathops
 from merge_core import TEMP_NAME_PREFIXES
 from natural_sort import sort_pdf_names
 
@@ -118,20 +120,22 @@ def apply_renames(items: list[RenameItem]) -> RenameResult:
         return RenameResult(renamed=0, unchanged=unchanged_count)
 
     folder = targets[0].source.parent
-    temp_paths = {
-        item.source: folder / f"{TEMP_RENAME_PREFIX}{order}.tmp"
-        for order, item in enumerate(targets, start=1)
-    }
+    temp_paths = dict(
+        zip(
+            (item.source for item in targets),
+            pathops.temp_paths_for(folder, TEMP_RENAME_PREFIX, len(targets)),
+        )
+    )
     current: dict[RenameItem, Path] = {}
     rollback_ok = True
     try:
         for item in targets:  # ① 一時名へ
             temp = temp_paths[item.source]
-            os.rename(item.source, temp)
+            pathops.move_into(item.source, temp)
             current[item] = temp
         for item in targets:  # ② 最終名へ
             final = folder / item.new_name
-            os.rename(current[item], final)
+            pathops.move_into(current[item], final)
             current[item] = final
     except Exception as exc:
         for item in targets:  # 変更済みだけを元の名前へ戻す
@@ -139,16 +143,15 @@ def apply_renames(items: list[RenameItem]) -> RenameResult:
             if path is None or path == item.source:
                 continue
             try:
-                os.rename(path, item.source)
+                pathops.move_into(path, item.source)
             except OSError:
                 rollback_ok = False
-        raise ValueError(f"ファイル名を変更できませんでした。変更済みの名前は元に戻しました。\n{exc}") from exc
+        raise ValueError(
+            f"ファイル名を変更できませんでした。変更済みの名前は元に戻しました。\n{pathops.describe_os_error(exc, folder)}"
+        ) from exc
     finally:
         if rollback_ok:  # 一時名の残骸を掃除する（戻せなかったファイルを消さない）
             for temp in temp_paths.values():
                 if temp.exists():
-                    try:
-                        temp.unlink()
-                    except OSError:
-                        pass
+                    pathops.remove_file(temp)
     return RenameResult(renamed=len(targets), unchanged=unchanged_count)

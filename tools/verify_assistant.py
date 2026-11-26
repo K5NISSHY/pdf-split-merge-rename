@@ -211,7 +211,7 @@ def main() -> int:
                 raise OSError("検証による意図的な失敗")
             return real_rename(src, dst)
 
-        split_core.os.rename = flaky_rename
+        os.rename = flaky_rename  # 名前変更は pathops 経由でも os.rename を呼ぶ
         try:
             split_core.split_pdf(src_pdf, src_xlsx, fail_out, "名簿", "A1",
                                  lambda e, s, c, n: modes.build_filenames(modes.BASE_SEQ, e, s, c, n))
@@ -219,7 +219,7 @@ def main() -> int:
         except ValueError as exc:
             check("分割ファイルを保存できませんでした" in str(exc), "FR-12 書き出し失敗は日本語エラーに変換")
         finally:
-            split_core.os.rename = real_rename
+            os.rename = real_rename
         check(list(fail_out.iterdir()) == [], "FR-12 失敗後に作成済み出力が残らない（ロールバック）")
         check(staging_dirs(fail_out) == [], "FR-12 失敗後に一時フォルダーも残らない")
 

@@ -4,24 +4,24 @@
 1つのPDFへ連結する。暗号化・破損があれば書き始める前に中止し、
 出力は出力先内の一時フォルダー（`.pdf_merge_*`）へ排他作成（`xb`）で書いて
 成功後にだけ最終名へ移動する。既存ファイルの上書きは一切行わない。
+一時フォルダーの作成・最終名への移動・後片付けは pathops.py 経由で行い、
+ネットワークドライブ（NAS共有）でも同じ結果にする。
 エラー文言は split_core.py の既存文言と同じ文体を保つ。
 """
 
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from pypdf import PdfWriter
 
+import pathops
 from natural_sort import sort_pdf_names
 from split_core import load_pdf, validate_filename_base
 
 # 分割・結合・リネームが一時的に作る名前（対象ファイルから常に除外する）
-TEMP_NAME_PREFIXES = (".pdf_split_", ".pdf_merge_", ".pdf_rename_")
+TEMP_NAME_PREFIXES = pathops.TEMP_NAME_PREFIXES
 MAX_LISTED = 8  # エラー一覧にそのまま並べる件数。超分は「ほか N 件」にまとめる
 
 
@@ -126,7 +126,10 @@ def build_merge_plan(folder: Path, out_name: str, output_dir: Path) -> MergePlan
 def merge_pdfs(plan: MergePlan) -> Path:
     """プランどおり自然順で全ページを連結し、一時フォルダー経由で保存する."""
     output_dir = plan.output_path.parent
-    staging_dir = Path(tempfile.mkdtemp(prefix=".pdf_merge_", dir=output_dir))
+    try:
+        staging_dir = pathops.make_staging_dir(output_dir, ".pdf_merge_")
+    except OSError as exc:
+        raise ValueError(f"結合ファイルを保存できませんでした。\n{pathops.describe_os_error(exc, output_dir)}") from exc
     staged = staging_dir / plan.output_path.name
     readers = []
     try:
@@ -136,21 +139,16 @@ def merge_pdfs(plan: MergePlan) -> Path:
             readers.append(reader)
             for page in reader.pages:
                 writer.add_page(page)
-        with staged.open("xb") as stream:  # 排他作成（既存名へは書かない）
-            writer.write(stream)
-        os.rename(staged, plan.output_path)
+        pathops.write_exclusive(staged, writer.write)  # 排他作成（既存名へは書かない）
+        pathops.move_into(staged, plan.output_path)
     except Exception as exc:
-        if staged.exists():
-            try:
-                staged.unlink()
-            except OSError:
-                pass
-        raise ValueError(f"結合ファイルを保存できませんでした。\n{exc}") from exc
+        pathops.remove_file(staged)
+        raise ValueError(f"結合ファイルを保存できませんでした。\n{pathops.describe_os_error(exc, plan.output_path)}") from exc
     finally:
         for reader in readers:
             try:
                 reader.close()
             except Exception:
                 pass
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        pathops.remove_tree(staging_dir)
     return plan.output_path

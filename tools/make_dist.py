@@ -6,9 +6,9 @@ r"""配布用最小パッケージを作るスクリプト.
   dist\pdf-split-merge-rename\            … 動作に必要なファイルだけを集めた受け取り用フォルダー
   dist\pdf-split-merge-rename-v<版>-min.zip … 上のフォルダーをそのまま収めたzip（メール等での配布用）
 
-含める11ファイル（これだけで動作する。tools\samples\docs\refs\テストは配布しない）:
+含める12ファイル（これだけで動作する。tools\samples\docs\refs\テストは配布しない）:
   pdf_split_merge_rename.py / split_core.py / natural_sort.py / merge_core.py / rename_core.py
-  modes.py / preview.py
+  modes.py / preview.py / pathops.py
   起動.bat / README.md / LICENSE / LICENSE.ja.md
 .gitignore・.venv・__pycache__ は含めない（.venvはこのPC専用で、受け取り側では 起動.bat がライブラリを入れる）。
 """
@@ -23,13 +23,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 PACKAGE_NAME = "pdf-split-merge-rename"
 DIST_DIR = ROOT / "dist"
 STAGING = DIST_DIR / PACKAGE_NAME
 ZIP_PATH = DIST_DIR / f"{PACKAGE_NAME}-v{VERSION}-min.zip"
 
-# 動作に必須の7ファイル + 起動用の bat + 案内とライセンス
+# 動作に必須の8ファイル + 起動用の bat + 案内とライセンス
 PACKAGE_FILES = [
     "pdf_split_merge_rename.py",
     "split_core.py",
@@ -38,6 +38,7 @@ PACKAGE_FILES = [
     "rename_core.py",
     "modes.py",
     "preview.py",
+    "pathops.py",
     "起動.bat",
     "README.md",
     "LICENSE",

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import sys
 import tempfile
@@ -522,7 +523,7 @@ def verify_rename(root: Path) -> None:
     rn2.mkdir()
     for name in ("1_a.pdf", "2_b.pdf", "3_c.pdf"):
         make_pdf(rn2 / name, 1)
-    real_rename = rename_core.os.rename
+    real_rename = os.rename
     calls = {"n": 0}
 
     def flaky_rename(source, target):
@@ -531,14 +532,14 @@ def verify_rename(root: Path) -> None:
             raise OSError("検証による意図的な失敗")
         return real_rename(source, target)
 
-    rename_core.os.rename = flaky_rename
+    os.rename = flaky_rename  # 名前変更は pathops 経由でも os.rename を呼ぶ
     fail_message = ""
     try:
         rename_core.apply_renames(rename_core.build_rename_plan(rn2, rn_excel, "Sheet", "A1", modes.BASE_SEQ))
     except ValueError as exc:
         fail_message = str(exc)
     finally:
-        rename_core.os.rename = real_rename
+        os.rename = real_rename
     check(
         "44. FR-R9 2段階リネームの②で失敗しても全ファイルを元名へ戻す（ロールバック）",
         "変更済みの名前は元に戻しました" in fail_message

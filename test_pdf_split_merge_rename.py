@@ -1276,6 +1276,16 @@ class PathOpsTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"old")  # 上書きしていない
             self.assertTrue(source.is_file())
 
+    def test_move_into_reports_failure_when_source_cannot_be_removed(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination = self.make_pair(root)
+            always_refused = os_error(32, "この共有では名前変更が使えません")
+            with patch("os.rename", side_effect=always_refused), patch("pathops.time.sleep"), patch("pathops.remove_file"):
+                with self.assertRaises(OSError):
+                    pathops.move_into(source, destination)
+            self.assertTrue(source.is_file())  # 元ファイルが残る＝失敗として報告する
+
     def test_write_exclusive_refuses_existing_file(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "a.pdf"

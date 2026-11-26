@@ -118,6 +118,10 @@ def move_into(source: Path, destination: Path) -> None:
         assert last_error is not None
         raise last_error from None
     remove_file(source)
+    if source.exists():
+        # 元ファイルを消せなければ「同じ名前が2個」になるため、失敗として扱う
+        assert last_error is not None
+        raise last_error from None
 
 
 def remove_file(path: Path) -> None:

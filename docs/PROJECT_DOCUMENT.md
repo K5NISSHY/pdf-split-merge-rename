@@ -282,14 +282,14 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 
 | 検証 | 実測値 |
 | --- | --- |
-| `python -m unittest -v` | `Ran 124 tests` / `OK (skipped=4)`（実実行は `py -3 -m unittest -v`。終了コード0。v2.0.1 で `PathOpsTests` 13件と「`.` 始まり拒否＋共有違反」を模擬する `NasLikeServerTests` 4件を追加。`skipped=4` は `NetworkShareTests` で、`PDFSMS_TEST_SHARE` を設定すると実行される） |
+| `python -m unittest -v` | `Ran 125 tests` / `OK (skipped=4)`（実実行は `py -3 -m unittest -v`。終了コード0。v2.0.1 で `PathOpsTests` 14件と「`.` 始まり拒否＋共有違反」を模擬する `NasLikeServerTests` 4件を追加。`skipped=4` は `NetworkShareTests` で、`PDFSMS_TEST_SHARE` を設定すると実行される） |
 | `NetworkShareTests`（実際の共有フォルダー） | `PDFSMS_TEST_SHARE=\\localhost\pdftest` で `python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests` → `Ran 4 tests` / `OK`（分割3ファイル・結合1件・リネーム2件・プレビュー3種。SMB共有上で作成・名前変更・削除が完了し、一時名の残骸なしを確認。NAS実機でも同じ手順で確認できる） |
 | `tools\verify_independent.py` | `TOTAL: 45/45`（終了コード0。1〜14: 分割 / 15〜31: FR-M1〜M14 / 32〜45: FR-R1〜R13） |
 | `tools\verify_assistant.py` | `TOTAL: 65/65`（終了コード0。v1.0.0 の42項目を保持し、タブ4枚化と FR-C・FR-M・FR-R のGUI検査23項目を追加） |
 | `tools\verify_gui_display.py` | `TOTAL: 1/1`（実ウィンドウ 724x713 px。タブ4枚・列構成4種・結合後ファイル名の自動補完 `input` を確認） |
 | `tools\run_sample_split.py` | `TOTAL: 13/13`（終了コード0） |
 | `tools\run_sample_merge_rename.py` | `TOTAL: 23/23`（終了コード0。結合11項目 / リネーム12項目。`samples\検証結果\結合\結合結果.pdf` は8ページ） |
-| 配布 zip | `dist\pdf-split-merge-rename-v2.0.1-min.zip` 35,771 バイト / 12ファイル / SHA-256 `8de9a3de8f9a8b56ede46d6f8588bf8400aa7b1107b2abacb39e4f0b08227e0b`（2026-11-26 再生成時の実測。zip はファイルの更新時刻も格納されるため、中身が同じでも再実行すると SHA-256 は変わる。受け取り用フォルダー `dist\pdf-split-merge-rename\` は12ファイル 94,417 バイト。展開検査で12エントリ・破損なし PASS。v2.0.0 版は 31,726 B・11ファイルだった） |
+| 配布 zip | `dist\pdf-split-merge-rename-v2.0.1-min.zip` 35,822 バイト / 12ファイル / SHA-256 `c60c7499425a91b903351ecb1f3e280e689f56d78e4d8636b9339f3a6cfab08d`（2026-11-26 再生成時の実測。zip はファイルの更新時刻も格納されるため、中身が同じでも再実行すると SHA-256 は変わる。受け取り用フォルダー `dist\pdf-split-merge-rename\` は12ファイル 94,625 バイト。展開検査で12エントリ・破損なし PASS。v2.0.0 版は 31,726 B・11ファイルだった） |
 | `tools\verify_release_check.py` | `TOTAL: 48/48`（終了コード0。補助役の検証とは別観点: 自然順の境界（001/003/008/9/10・20/100・a9/a10）、結合順序をページ幅で実測（結果PDFの幅が 101,101,103,103,108,108,109,109,110,110）、既存出力での中止、入力PDFと同名の出力名を拒否、不正名4種（`a/b` / `CON` / 空 / `x.docx`）、0件・1件の案内、**同一フォルダー出力は初回成功・2回目中止**、暗号化＋破損を1回のエラーでまとめて報告、失敗時に出力なし、リネームの自然順割り当て・再実行は全て `[変更不要]`・セル別ルール・名前入替（2段階ステージング）・同名フォルダーとの衝突で中止（ファイルもフォルダーも不変）、`os.rename` を模擬失敗させて**全件が元名へ戻る**ことと一時名残骸なし、重複名は実行で中止・プレビューは通す、GUIのタブ4枚・結合後名の自動補完とユーザー編集名の保持） |
 
 ---
@@ -322,5 +322,5 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 | --- | --- | --- |
 | 2026-11-24 | 全文 | 初版（v1.0.0 からの追加要件: 結合タブ・リネームタブ） |
 | 2026-11-24 | 2〜7 | 実装完了に伴い FR-C / FR-M / FR-R の要件と各スクリプトの仕様を確定。6章に実測値（単体テスト 103 件 OK / 独立検証 45/45 / 別系統検証 65/65 / リリース前検査 48/48 / サンプル実実行 13/13・23/23 / GUI 724x713・タブ4枚 / 配布zip 31,726 B・11ファイル）、7章に留意点、8章に拡張アイデアを追記 |
-| 2026-11-26 | 2・3・6・7 | **v2.0.1: ネットワークドライブ（NAS共有）対応**。`pathops.py` を新規追加し、分割・結合・リネームの「一時書き出し → 名前変更 → 後片付け」を共通補助へ集約（`.` 始まりを拒否する共有では `~` 始まりの一時名、WinError 32/33/64 の再試行、コピー→削除の代替、`fsync` で内容確定、削除の再試行、アクセス権・混雑の案内文言）。FR-C11 を追加、3.8 を更新、3.9 を新設、7章に留意点。テスト 103→124 件（共有の挙動を模擬する `NasLikeServerTests`、実共有を使う `NetworkShareTests`）。配布ファイル 11→12 |
+| 2026-11-26 | 2・3・6・7 | **v2.0.1: ネットワークドライブ（NAS共有）対応**。`pathops.py` を新規追加し、分割・結合・リネームの「一時書き出し → 名前変更 → 後片付け」を共通補助へ集約（`.` 始まりを拒否する共有では `~` 始まりの一時名、WinError 32/33/64 の再試行、コピー→削除の代替、`fsync` で内容確定、削除の再試行、アクセス権・混雑の案内文言）。FR-C11 を追加、3.8 を更新、3.9 を新設、7章に留意点。テスト 103→125 件（共有の挙動を模擬する `NasLikeServerTests`、実共有を使う `NetworkShareTests`）。配布ファイル 11→12 |
 

@@ -188,7 +188,7 @@ py -3 tools\verify_release_check.py
 py -3 tools\make_samples.py
 ```
 
-v2.0.1 での実測値（Windows 11 / Python 3.15.2・pypdf 7.1.1・openpyxl 3.1.5）: `py -3 -m unittest -v` が `Ran 124 tests` / `OK (skipped=4)`（`PDFSMS_TEST_SHARE` を設定して実行すると共有フォルダーでの 4機能確認が走り `OK`）、`tools\verify_independent.py` が `TOTAL: 45/45`、`tools\verify_assistant.py` が `TOTAL: 65/65`、`tools\verify_gui_display.py` が `TOTAL: 1/1`（実ウィンドウ 724x713 px・タブ4枚）、`tools\run_sample_split.py` が `TOTAL: 13/13`、`tools\run_sample_merge_rename.py` が `TOTAL: 23/23`、`tools\verify_release_check.py` が `TOTAL: 48/48`。詳細は `docs/PROJECT_DOCUMENT.md` 第6章。
+v2.0.1 での実測値（Windows 11 / Python 3.15.2・pypdf 7.1.1・openpyxl 3.1.5）: `py -3 -m unittest -v` が `Ran 125 tests` / `OK (skipped=4)`（`PDFSMS_TEST_SHARE` を設定して実行すると共有フォルダーでの 4機能確認が走り `OK`）、`tools\verify_independent.py` が `TOTAL: 45/45`、`tools\verify_assistant.py` が `TOTAL: 65/65`、`tools\verify_gui_display.py` が `TOTAL: 1/1`（実ウィンドウ 724x713 px・タブ4枚）、`tools\run_sample_split.py` が `TOTAL: 13/13`、`tools\run_sample_merge_rename.py` が `TOTAL: 23/23`、`tools\verify_release_check.py` が `TOTAL: 48/48`。詳細は `docs/PROJECT_DOCUMENT.md` 第6章。
 
 ## 実際に動かすための最小ファイルと配布パッケージ
 

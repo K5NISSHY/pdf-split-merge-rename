@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 PACKAGE_NAME = "pdf-split-merge-rename"
 DIST_DIR = ROOT / "dist"
 STAGING = DIST_DIR / PACKAGE_NAME

@@ -146,8 +146,10 @@ class UnifiedPdfSplitApp:
         # タブ4: Excelでリネーム
         tk.Label(
             tab_rename,
-            text="入力フォルダーの直下のPDFを自然順に並べ、Excelの命名ルールで名前を変えます（上書きはしません）。",
+            text="入力フォルダーの直下のPDFを自然順に並べ、Excelの命名ルールで同じフォルダー内で名前を変えます。\n"
+                 "コピーは作らず、上書きもしません。共通欄の「出力先フォルダー」はこのタブでは使いません。",
             anchor="w",
+            justify="left",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         tk.Label(tab_rename, text="リネームのルール", width=20, anchor="w").grid(row=1, column=0, sticky="w")
         rule_box = tk.Frame(tab_rename)

@@ -3,11 +3,15 @@
 入力フォルダーの直下 `.pdf` を自然順に並べ、既存の命名関数
 （`modes.build_filenames`）へ「ページ数」の代わりに「ファイル数」を渡して
 新名を作り、同じ順序で割り当てる。実行は2段階リネーム
-（①同一フォルダー内の一時名 `.pdf_rename_tmp_<連番>.tmp` へ ②最終名へ）で行い、
+（①同一フォルダー内の一時名 `~pdf_rename_tmp_<連番>.tmp` へ ②最終名へ）で行い、
 どちらの段階で失敗しても変更済みのファイルをすべて元の名前へ戻してからエラーを出す。
 名前変更は pathops.py 経由で行うため、ネットワークドライブ（NAS共有）では
-一時的な共有違反の再試行や、共有が拒否する名前の代替（`~pdf_rename_tmp_`）を使う。
+一時的な共有違反の再試行や、共有が拒否する名前の代替（`.pdf_rename_tmp_`）を使う。
+一時名は共有で隠れない「~」始まりを先に選ぶ。
+名前変更のあとに新しい名前のファイルが揃っているかを確かめ、揃わなければ
+その場でエラーとして報告する（共有では成功したように見えて残らないことがあるため）。
 PDF・Excelの内容は一切変更せず、名前だけを変える。
+
 """
 
 from __future__ import annotations
@@ -75,7 +79,7 @@ def build_rename_plan(
     filenames = modes.build_filenames(
         mode, excel_path, sheet_name, cell, len(targets), abort_on_duplicates=abort_on_duplicates,
     )
-    return [
+    items = [
         RenameItem(
             order=order,
             source=source,
@@ -84,21 +88,43 @@ def build_rename_plan(
         )
         for order, (source, new_name) in enumerate(zip(targets, filenames), start=1)
     ]
+    temp_like = find_temp_like_names(items)
+    if temp_like:
+        preview = "\n".join(temp_like[:MAX_LISTED])
+        extra = f"\nほか {len(temp_like) - MAX_LISTED} 件" if len(temp_like) > MAX_LISTED else ""
+        raise ValueError(
+            "Excelのセル値が一時ファイルの名前（~pdf_rename_ / .pdf_rename_ など）に似ています。"
+            "この名前にすると以後の一覧から消えてしまうため、別の名前を使ってください。\n" + preview + extra
+        )
+    return items
 
 
 def find_rename_conflicts(items: list[RenameItem], folder: Path) -> list[str]:
-    """リネーム対象以外の既存ファイル（非PDF含む）と衝突する新名を返す（読み取りのみ）."""
-    target_names = {item.source.name.casefold() for item in items}
+    """リネーム対象以外の既存ファイル（非PDF含む）と衝突する新名を返す（読み取りのみ）.
+
+    名前を変えるファイルは一時名へ動かすので、その名前への衝突は問題にならない。
+    一方、名前を変えないファイル（unchanged）は動かさないため、その名前を
+    別のファイルが使うと上書きになる。名前を変えないファイルの名前も障害物として扱う。
+    """
+    moved_names = {item.source.name.casefold() for item in items if not item.unchanged}
     conflicts: list[str] = []
     reported: set[str] = set()
     for item in items:
+        if item.unchanged:  # 自分自身の名前と衝突することにはならない
+            continue
         key = item.new_name.casefold()
-        if key in target_names or key in reported:
+        if key in moved_names or key in reported:
             continue
         if (folder / item.new_name).exists():
             conflicts.append(item.new_name)
             reported.add(key)
     return conflicts
+
+
+def find_temp_like_names(items: list[RenameItem]) -> list[str]:
+    """一時ファイルの名前と紛らわしい新名を返す（以後の一覧から消えるため使わせない）."""
+    like = [item.new_name for item in items if item.new_name.startswith(TEMP_NAME_PREFIXES)]
+    return list(dict.fromkeys(like))
 
 
 def check_rename_plan(items: list[RenameItem], folder: Path) -> None:
@@ -154,4 +180,17 @@ def apply_renames(items: list[RenameItem]) -> RenameResult:
             for temp in temp_paths.values():
                 if temp.exists():
                     pathops.remove_file(temp)
+    # 名前変更が共有上で正しく完了したかを確かめる（共有では成功したように見えて残らないことがある）
+    missing = [item.new_name for item in targets if not (folder / item.new_name).exists()]
+    if missing:
+        preview = "\n".join(missing[:MAX_LISTED])
+        extra = f"\nほか {len(missing) - MAX_LISTED} 件" if len(missing) > MAX_LISTED else ""
+        raise ValueError(
+            "名前を変更したはずのファイルが入力フォルダーに見当たりません。ファイルが消えたわけではありません。\n"
+            "同じフォルダーをエクスプローラーで開き、Excelのセル値と同じ名前のファイル、"
+            "および ~pdf_rename_tmp_ や .pdf_rename_tmp_ で始まるファイルを確認してください。\n"
+            "ネットワークドライブの場合は共有の再接続、またはフォルダーをF5で更新して再確認してください。\n"
+            + preview
+            + extra
+        )
     return RenameResult(renamed=len(targets), unchanged=unchanged_count)

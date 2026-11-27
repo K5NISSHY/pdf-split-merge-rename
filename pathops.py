@@ -51,14 +51,19 @@ def describe_os_error(exc: Exception, path: Path) -> str:
 
 
 def make_staging_dir(parent: Path, prefix: str) -> Path:
-    """出力先フォルダー内に一時フォルダーを作る（「.」始まりが拒否されたら「~」始まりへ）."""
+    """出力先フォルダー内に一時フォルダーを作る.
+
+    「~」始まりを先に使う。共有サーバーは「.」始まりを隠す・拒否することがあり、
+    途中で止まったときにユーザーが見つけられないため。「~」が使えない共有では
+    「.」始まりへ戻る。
+    """
     try:
-        return Path(tempfile.mkdtemp(prefix=prefix, dir=str(parent)))
-    except OSError as dot_error:
+        return Path(tempfile.mkdtemp(prefix=tilde_prefix(prefix), dir=str(parent)))
+    except OSError as tilde_error:
         try:
-            return Path(tempfile.mkdtemp(prefix=tilde_prefix(prefix), dir=str(parent)))
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(parent)))
         except OSError:
-            raise dot_error from None
+            raise tilde_error from None
 
 
 def tilde_prefix(prefix: str) -> str:
@@ -67,8 +72,13 @@ def tilde_prefix(prefix: str) -> str:
 
 
 def temp_paths_for(folder: Path, prefix: str, count: int) -> list[Path]:
-    """フォルダー内で実際に作れる一時名を count 個返す（ドット始まりを試して無理ならチルダへ）."""
-    for candidate in (prefix, tilde_prefix(prefix)):
+    """フォルダー内で実際に作れる一時名を count 個返す.
+
+    「~」始まりを先に試す。共有サーバーが「.」始まりを隠すと、名前変更の途中で
+    止まったときに一時ファイルが見えず、PDFが消えたと誤解されるため。
+    「~」が拒否される共有では「.」始まりへ戻る。
+    """
+    for candidate in (tilde_prefix(prefix), prefix):
         probe = folder / f"{candidate}probe.tmp"
         created = False
         try:
@@ -98,8 +108,11 @@ def write_exclusive(path: Path, write_content) -> None:
 def move_into(source: Path, destination: Path) -> None:
     """名前を動かす。一時的な共有違反は再試行し、それでも動かなければコピー→削除で同じ結果にする.
 
-    既存ファイルへの上書きは行わない（代替手段も排他作成を使う）。
+    既存ファイルへの上書きは行わない。`os.rename` は宛先にファイルがあると
+    無条件で上書きするため、先に存在を確認して拒否する（代替のコピーも排他作成）。
     """
+    if destination.exists():
+        raise FileExistsError(f"宛先に既にファイルがあります。上書きは行いません。\n{destination.name}")
     last_error: OSError | None = None
     for delay in (None,) + RETRY_DELAYS:
         if delay is not None:

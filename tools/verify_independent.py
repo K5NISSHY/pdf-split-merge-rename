@@ -661,6 +661,47 @@ def verify_copy(root: Path) -> None:
     )
 
 
+def verify_no_split(root: Path) -> None:
+    """FR-R19: リネームタブはPDFを分割しない（PDF 1件 = 1ファイル、ページ数そのまま）."""
+    inbox = root / "nosplit_in"
+    inbox.mkdir()
+    make_pdf(inbox / "multi.pdf", 3)
+    make_pdf(inbox / "single.pdf", 1)
+    excel = root / "nosplit_names.xlsx"
+    make_excel(excel, {"A1": "報告書"})
+    items = rename_core.build_rename_plan(inbox, excel, "Sheet", "A1", modes.BASE_SEQ)
+    check(
+        "52. FR-R19 リネーム計画はPDF 1件に1ファイル（ページ数ではなく件数で名前を作る）",
+        [item.source.name for item in items] == ["multi.pdf", "single.pdf"],
+    )
+    rename_core.check_rename_plan(items, inbox)
+    rename_core.apply_renames(items)
+    check(
+        "53. FR-R19 その場で改名でもファイル数と各PDFのページ数は変わらない（3ページ/1ページ）",
+        sorted(p.name for p in inbox.glob("*.pdf")) == ["報告書_001.pdf", "報告書_002.pdf"]
+        and page_count(inbox / "報告書_001.pdf") == 3
+        and page_count(inbox / "報告書_002.pdf") == 1,
+    )
+    out = root / "nosplit_out"
+    out.mkdir()
+    copy_plan = rename_core.build_copy_plan(
+        rename_core.build_rename_plan(inbox, excel, "Sheet", "A1", modes.BASE_SEQ), out
+    )
+    rename_core.check_copy_plan(copy_plan, out)
+    rename_core.apply_copies(copy_plan)
+    check(
+        "54. FR-R19 出力先へコピーでもページ数はそのまま（3/1）で入力のPDFも無傷",
+        page_count(out / "報告書_001.pdf") == 3
+        and page_count(out / "報告書_002.pdf") == 1
+        and page_count(inbox / "報告書_001.pdf") == 3,
+    )
+    rows = preview.build_rename_preview(inbox, excel, "Sheet", "A1", modes.BASE_SEQ)
+    check(
+        "55. FR-R19 プレビューはPDF 1件=1行（複数ページでも行数はページ数にならない）",
+        len(rows) == 2 and [row.old_name for row in rows] == ["報告書_001.pdf", "報告書_002.pdf"],
+    )
+
+
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix=".pdf_split_verify_", dir=str(PROJECT_ROOT)))
     try:
@@ -668,6 +709,7 @@ def main() -> int:
         verify_merge(root)
         verify_rename(root)
         verify_copy(root)
+        verify_no_split(root)
     except Exception as exc:  # 想定外例外も合否として計上する
         check(f"検証スクリプトが想定外のエラーで終了した: {exc}", False)
     finally:

@@ -251,7 +251,8 @@ def main() -> int:
             check(labeled.count("プレビュー") == 1 and labeled.count("分割を実行") == 2
                   and labeled.count("結合を実行") == 1 and labeled.count("リネームを実行") == 1,
                   f"FR-11/FR-C8 実行ボタンは各タブ内（プレビュー1・分割を実行2・結合を実行1・リネームを実行1）: {labeled}")
-            check(root.title() == "PDF 分割・結合・ファイル名自動生成ツール（統合版）", f"FR-11 タイトル: {root.title()}")
+            check(root.title().startswith("PDF 分割・結合・ファイル名自動生成ツール（統合版） v"),
+                  f"FR-11 タイトルに版を表示: {root.title()}")
             headers = [app.preview_tree.heading(col, "text") for col in ("page", "filename", "status")]
             check(headers == ["ページ番号", "出力ファイル名", "状態"], f"FR-14 一覧の列構成: {headers}")
             # 102ページ分のプレビュー表示（ほか 2 件 検証）
@@ -436,6 +437,35 @@ def main() -> int:
             check(bool(dialogs["error"]) and "出力先に同じ名前のファイルが既にあります" in dialogs["error"][-1][1]
                   and sorted(p.name for p in copy_out.iterdir()) == ["報告書_001.pdf", "報告書_002.pdf"],
                   "FR-R17 出力先に既存名があると実行前に中止し、上書きしていない")
+            # FR-R19: 複数ページPDFでも分割せず、PDF 1件 = 1ファイルのままページ数は変わらない
+            multi_in = work / "multi_in"
+            multi_in.mkdir()
+            make_pdf(multi_in / "x_3p.pdf", 3)
+            make_pdf(multi_in / "y_1p.pdf", 1)
+            multi_out = work / "multi_out"
+            multi_out.mkdir()
+            app.folder_var.set(str(multi_in))
+            app.rename_target_var.set(gui.RENAME_TARGET_COPY)
+            app.output_var.set(str(multi_out))
+            app.run_preview()
+            multi_rows = [app.preview_tree.item(row, "values") for row in app.preview_tree.get_children()]
+            check(len(multi_rows) == 2 and "PDF 2 件 → 2 ファイル（分割なし" in app.status_label.cget("text"),
+                  f"FR-R19 複数ページPDFでもプレビューはPDF 1件=1行・要約に分割なし: {app.status_label.cget('text')}")
+            dialogs["info"].clear()
+            app.run_rename()
+            check(sorted(p.name for p in multi_out.iterdir()) == ["報告書_001.pdf", "報告書_002.pdf"]
+                  and [len(PdfReader(multi_out / n).pages) for n in ("報告書_001.pdf", "報告書_002.pdf")] == [3, 1]
+                  and bool(dialogs["info"]) and "PDFの分割は行っていません" in dialogs["info"][-1][1],
+                  "FR-R19 出力先のPDFはページ数そのまま（3/1）、完了報告にも分割なしと明記")
+            label_texts = []
+            stack = [app.notebook]
+            while stack:
+                widget = stack.pop()
+                if widget.winfo_class() == "Label":
+                    label_texts.append(str(widget.cget("text")))
+                stack.extend(widget.winfo_children())
+            check(any("PDFの分割を行いません" in text for text in label_texts),
+                  "FR-R19 リネームタブの説明に「PDFの分割を行いません」を明記")
             app.rename_target_var.set(gui.RENAME_TARGET_INPLACE)
             app.folder_var.set(str(rename_in))
             app.output_var.set(output_before)

@@ -1347,6 +1347,50 @@ class CopyModeTests(RenameDataMixin, unittest.TestCase):
         self.assertEqual([row.conflict for row in inplace_rows], [False, False])
 
 
+class RenameKeepsPagesTests(RenameDataMixin, unittest.TestCase):
+    """FR-R19: リネームタブはPDFを分割しない（PDF 1件 = 1ファイル、ページ数はそのまま）."""
+
+    def setUp(self):
+        super().setUp()
+        self.outbox = self.root / "outbox"
+        self.outbox.mkdir()
+        self.add_pdf("multi.pdf", 3)
+        self.add_pdf("single.pdf", 1)
+        make_excel(self.excel, {"A1": "報告書", "B1": "表紙", "B2": "本文"})
+
+    def page_counts(self, folder: Path) -> dict[str, int]:
+        """フォルダー直下のPDFについて 名前 → ページ数 を返す."""
+        return {p.name: len(PdfReader(str(p)).pages) for p in sorted(folder.glob("*.pdf"))}
+
+    def test_inplace_rename_keeps_file_count_and_page_counts(self):
+        items = rename_core.build_rename_plan(self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        rename_core.check_rename_plan(items, self.inbox)
+        rename_core.apply_renames(items)
+        self.assertEqual(self.page_counts(self.inbox), {"報告書_001.pdf": 3, "報告書_002.pdf": 1})
+
+    def test_per_cell_rule_also_keeps_page_counts(self):
+        items = rename_core.build_rename_plan(self.inbox, self.excel, "Sheet", "B1", modes.PER_CELL)
+        rename_core.check_rename_plan(items, self.inbox)
+        rename_core.apply_renames(items)
+        self.assertEqual(self.page_counts(self.inbox), {"本文.pdf": 1, "表紙.pdf": 3})
+
+    def test_copy_rename_keeps_pages_and_leaves_input_intact(self):
+        items = rename_core.build_rename_plan(self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        plan = rename_core.build_copy_plan(items, self.outbox)
+        rename_core.check_copy_plan(plan, self.outbox)
+        rename_core.apply_copies(plan)
+        self.assertEqual(self.page_counts(self.outbox), {"報告書_001.pdf": 3, "報告書_002.pdf": 1})
+        self.assertEqual(self.page_counts(self.inbox), {"multi.pdf": 3, "single.pdf": 1})
+
+    def test_preview_has_one_row_per_pdf_not_per_page(self):
+        rows = preview.build_rename_preview(self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        self.assertEqual([row.old_name for row in rows], ["multi.pdf", "single.pdf"])
+        copy_rows = preview.build_rename_preview(
+            self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ, self.outbox, True,
+        )
+        self.assertEqual([row.old_name for row in copy_rows], ["multi.pdf", "single.pdf"])
+
+
 class MergeRenamePreviewTests(MergeDataMixin, unittest.TestCase):
     """FR-M13/FR-R11: プレビュー一覧（書き出し・名前変更を行わない）."""
 
@@ -1413,6 +1457,17 @@ class GuiWordingTests(unittest.TestCase):
         self.assertTrue(hasattr(gui, "main"))
         self.assertEqual(gui.PREVIEW_VISIBLE_ROWS, 12)
         self.assertEqual(gui.STATE_STALE, "入力変更あり: プレビューを更新してください")
+
+    def test_rename_tab_states_that_it_does_not_split(self):
+        """FR-R19: リネームタブは分割しないことを説明・プレビュー・完了報告で示す."""
+        import inspect
+
+        import pdf_split_merge_rename as gui
+
+        source = inspect.getsource(gui)
+        self.assertIn("PDFの分割を行いません", source)
+        self.assertIn("分割なし", source)
+        self.assertIn("PDFの分割は行っていません", source)
 
     def test_rename_target_choices_are_exposed(self):
         """FR-R16: 適用先（その場で改名 / 出力先へコピー）の2択が並んでいる."""

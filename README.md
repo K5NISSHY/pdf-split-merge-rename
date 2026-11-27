@@ -6,7 +6,7 @@ PDFを1ページずつに分割し、Excelのセル値でファイル名を付�
 v2.0.0 では同じウィンドウに **「PDF結合」** と **「Excelでリネーム」** の2タブを加え、
 分割 → 結合 → リネームまでを1本のツールで扱えます。
 
-- **バージョン:** 2.1.0
+- **バージョン:** 2.1.1
 - **製作者:** K5NISSHY
 - **継承:** `refs/PDF-Split-Rename/` と `refs/PDF-Split-Rename-By-Cell/` に、元となった2ツールの参考コードの写しを読み取り用同梱しています。本ツールのUI・事前検査・書き出しの安全規則・日本語エラー文言は、この2本の挙動を踏襲しています（分割タブ2枚の挙動とエラー文言は v1.0.0 から変更していません）。
 
@@ -142,6 +142,8 @@ samples\検証結果\リネーム\
 
 名前を変えたはずのファイルが見当たらないときは、そのフォルダーで表示を更新（F5）し、`~pdf_rename_tmp_` や `.pdf_rename_tmp_` で始まるファイルがないか確認してください。あれば、そのまま残さずエラー文言といっしょに報告してください。
 
+**リネームタブはPDFを分割しません。** 入力フォルダー直下のPDF 1件に1ファイルを対応させ、ページ数はそのまま保ちます（3ページのPDFは3ページのまま名前だけ変わります）。プレビューの要約は `プレビュー: PDF 3 件 → 3 ファイル（分割なし・名前変更 3 / 変更不要 0、名前変更は行っていません）` のように、PDFの件数と出力ファイル数が同じであることを表示し、完了報告にも「PDFの分割は行っていません」と出ます。PDFをページ単位に分けたいときは、分割用の「セル値＋連番」タブまたは「セル別（連番なし）」タブを使ってください。リネームタブの名前（連番付き・セル値そのまま）は分割タブと似た並びになることがありますが、作られるファイルは入力PDFの件数と同じです。
+
 ## ネットワークドライブ（NAS共有）での利用
 
 入力PDF・Excelブック・出力先には、ネットワーク上の共有フォルダー（`\\192.168.1.50\PDF\...` のような UNC パス、または割り当て済みのネットワークドライブ）をそのまま指定できます。分割・結合・Excelでリネーム・プレビューの4機能とも、共有フォルダーからの読み込みと共有フォルダーへの保存で動作します。リネームの「出力先へコピー」も、入力をNAS・出力をNAS（またはローカル）のように組み合わせて使えます。
@@ -201,7 +203,7 @@ py -3 tools\verify_release_check.py
 py -3 tools\make_samples.py
 ```
 
-v2.1.0 での実測値（Windows 11 / Python 3.15.2・pypdf 7.1.1・openpyxl 3.1.5）: `py -3 -m unittest -v` が `Ran 150 tests` / `OK (skipped=4)`（`PDFSMS_TEST_SHARE` を設定して実行すると共有フォルダーでの 4機能確認が走り `OK`）、`tools\verify_independent.py` が `TOTAL: 51/51`（46〜51 は「出力先へコピー」）、`tools\verify_assistant.py` が `TOTAL: 71/71`（コピーモードのGUI検査6項目を含む）、`tools\verify_gui_display.py` が `TOTAL: 1/1`（実ウィンドウ・タブ4枚）、`tools\run_sample_split.py` が `TOTAL: 13/13`、`tools\run_sample_merge_rename.py` が `TOTAL: 23/23`、`tools\verify_release_check.py` が `TOTAL: 48/48`。詳細は `docs/PROJECT_DOCUMENT.md` 第6章。
+v2.1.1 での実測値（Windows 11 / Python 3.15.2・pypdf 7.1.1・openpyxl 3.1.5）: `py -3 -m unittest -v` が `Ran 155 tests` / `OK (skipped=4)`（`PDFSMS_TEST_SHARE` を設定して実行すると共有フォルダーでの 4機能確認が走り `OK`）、`tools\verify_independent.py` が `TOTAL: 55/55`（46〜51 は「出力先へコピー」、52〜55 は「リネームはPDFを分割しない」）、`tools\verify_assistant.py` が `TOTAL: 74/74`（コピーモードのGUI検査6項目と、リネームが分割しないことのGUI検査3項目を含む）、`tools\verify_gui_display.py` が `TOTAL: 1/1`（実ウィンドウ・タブ4枚）、`tools\run_sample_split.py` が `TOTAL: 13/13`、`tools\run_sample_merge_rename.py` が `TOTAL: 23/23`、`tools\verify_release_check.py` が `TOTAL: 48/48`。詳細は `docs/PROJECT_DOCUMENT.md` 第6章。
 
 ## 実際に動かすための最小ファイルと配布パッケージ
 

@@ -22,6 +22,7 @@ import rename_core
 import split_core
 
 PREVIEW_VISIBLE_ROWS = 12  # 一覧欄の表示行数（データは全件保持）
+APP_VERSION = "2.1.1"  # タイトル欄に表示する版（どの版を起動しているか判別できるようにする）
 STATE_INITIAL = "プレビューを押すと、出力予定のファイル名を一覧に表示します。"
 STATE_STALE = "入力変更あり: プレビューを更新してください"
 
@@ -75,7 +76,7 @@ TAB_COLUMNS = {
 class UnifiedPdfSplitApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title("PDF 分割・結合・ファイル名自動生成ツール（統合版）")
+        root.title(f"PDF 分割・結合・ファイル名自動生成ツール（統合版） v{APP_VERSION}")
         root.resizable(False, False)
         # FR-C2: 共通欄・タブ内の欄はすべて独立した変数（タブを切り替えても保持される）
         self.pdf_var = tk.StringVar()
@@ -156,6 +157,7 @@ class UnifiedPdfSplitApp:
         tk.Label(
             tab_rename,
             text="入力フォルダーの直下のPDFを自然順に並べ、Excelの命名ルールで名前を変えます。上書きはしません。\n"
+                 "このタブはPDFの分割を行いません。PDF 1件には1ファイル（ページ数はそのまま）を対応させます。\n"
                  "その場で改名: 同じフォルダー内で名前を変えます（コピーは作りません）。\n"
                  "出力先へコピー: 入力フォルダーのPDFを残したまま、共通欄の「出力先フォルダー」へ新しい名前で書き出します。",
             anchor="w",
@@ -460,8 +462,8 @@ class UnifiedPdfSplitApp:
                 action = "コピー" if copy_mode else "名前変更"
                 self._show_rows(
                     rows,
-                    f"プレビュー: {len(rows)} 件（{action} {len(rows) - unchanged} / 変更不要 {unchanged}、"
-                    f"{action}は行っていません）",
+                    f"プレビュー: PDF {len(rows)} 件 → {len(rows)} ファイル（分割なし・{action} {len(rows) - unchanged} / "
+                    f"変更不要 {unchanged}、{action}は行っていません）",
                 )
         except Exception as exc:
             self.invalidate_preview()
@@ -528,7 +530,7 @@ class UnifiedPdfSplitApp:
         self.invalidate_preview()
         messagebox.showinfo(
             "完了",
-            f"変更 {result.renamed} 件 / 変更不要 {result.unchanged} 件\nフォルダー: {folder}",
+            f"変更 {result.renamed} 件 / 変更不要 {result.unchanged} 件（PDFの分割は行っていません）\nフォルダー: {folder}",
         )
 
     def run_rename_copy(self, folder: Path, excel_path: Path, sheet_name: str, cell: str, mode: str) -> None:
@@ -546,7 +548,7 @@ class UnifiedPdfSplitApp:
         self.invalidate_preview()
         messagebox.showinfo(
             "完了",
-            f"コピー {result.copied} 件 / 変更不要 {result.unchanged} 件\n入力: {folder}\n出力: {out_folder}",
+            f"コピー {result.copied} 件 / 変更不要 {result.unchanged} 件（PDFの分割は行っていません）\n入力: {folder}\n出力: {out_folder}",
         )
 
 

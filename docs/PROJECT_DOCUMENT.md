@@ -1,7 +1,7 @@
-# PDF Split / Merge / Rename — プロジェクトドキュメント（v2.0.2）
+# PDF Split / Merge / Rename — プロジェクトドキュメント（v2.1.0）
 
 - **プロジェクト名:** pdf-split-merge-rename
-- **バージョン:** 2.0.2
+- **バージョン:** 2.1.0
 - **製作者:** K5NISSHY
 - **継承:** `pdf-split-unified` v1.0.0（GitHub: `K5NISSHY/pdf-split-unified`）の分割機能をそのまま引き継ぎ、**結合**と**リネーム**のタブを追加した新版。分割に関する要件・エラー文言・安全規則は元プロジェクトのものを一切変更しない。
 - **参考コード:** `refs/PDF-Split-Rename/`、`refs/PDF-Split-Rename-By-Cell/`（読み取り専用。設計と日本語文言の由来）
@@ -128,6 +128,9 @@ v1.0.0 の FR-1〜FR-14 をそのまま継承する。要点だけ再現する�
 | FR-R13 | Excel・PDFファイルの内容は一切変更しない（ファイル名のみを変更する） |
 | FR-R14 | 一時名として使われる形式（`~pdf_rename_` / `.pdf_rename_` 始まり）と紛らわしいセル値は実行前に拒否する。共有サーバーがこれらの名前を隠すと、以後の一覧から消えて「PDFが消えた」と誤解されるため（v2.0.2 で追加） |
 | FR-R15 | 名前変更の実行後、新しい名前のファイルがすべて存在するか確認し、欠けがあれば「入力フォルダーに見当たりません」＋確認手順を添えたエラーで報告する。成功として黙って終了しない（v2.0.2 で追加） |
+| FR-R16 | 「適用先」をラジオボタンで選べる: **その場で改名**（既定・従来動作）/ **出力先フォルダーへコピーして名前を変える**。コピーモードは入力フォルダーのPDFを一切動かさず、共通欄の「出力先フォルダー」へ新しい名前で書き出す。入力と出力が同じフォルダーでもよい（元名も残る）。このモードでは「出力先フォルダー」が必須で、未指定なら警告して実行しない（v2.1.0 で追加） |
+| FR-R17 | コピー実行前に出力先を検査し、同じ名前のファイル（非PDFを含む、大小無視）が1つでもあれば「出力先に同じ名前のファイルが既にあります。上書きは行いません。」で中止する。出力先フォルダーが存在しなければ「出力先フォルダーが見つかりません」で中止する。プレビューの `[衝突]` は「出力先に既存」の意味になる（v2.1.0 で追加） |
+| FR-R18 | コピーは出力先フォルダー内の一時名（`~pdf_rename_copy_<連番>.tmp`）で受け取ってから `move_into` で最終名へ動かし、既存ファイルの上書きは行わない。完了後に各ファイルの存在とサイズ一致を全件確認し、欠け・不一致は「コピーしたはずのファイルが出力先に正しく残っていません。入力フォルダーのPDFは無傷です」＋F5更新・共有再接続の案内で報告する（v2.1.0 で追加） |
 
 ### 2.5 非機能要件（NFR）
 
@@ -149,11 +152,11 @@ v1.0.0 の FR-1〜FR-14 をそのまま継承する。要点だけ再現する�
 ### 3.1 `pdf_split_merge_rename.py`（GUI・エントリポイント）
 
 - 共通欄5行（PDF / 入力フォルダー / Excel / シート / 出力先）＋タブ4枚＋プレビュー一覧欄＋状態欄・エラー欄。
-- タブ内欄: タブ1 `セル番地` / タブ2 `開始セル` / タブ3 `結合後のファイル名` / タブ4 `ルールradio` + `セル番地`。
+- タブ内欄: タブ1 `セル番地` / タブ2 `開始セル` / タブ3 `結合後のファイル名` / タブ4 `ルールradio` + `適用先radio` + `セル番地`。
 - `current_tab()` がタブID（`base_seq` / `per_cell` / `merge` / `rename`）を返し、`check_inputs(tab)` がタブごとに必要欄だけ検査する。
 - プレビュー一覧の列構成をタブごとに切り替える（`_apply_columns(tab)`）。
 - 実行ボタンはタブ内: 「分割を実行」×2 / 「結合を実行」/「リネームを実行」。
-- タブ4の先頭説明は2行で、「同じフォルダー内で名前を変える／コピーは作らない／共通欄の**出力先フォルダーはこのタブでは使わない**」を明示する（`check_inputs` はタブ4で「出力先」を検査せず、`rename_inputs()` も出力先を返さない）。完了メッセージは「変更 n 件 / 変更不要 m 件 / フォルダー: <入力フォルダー>」（v2.0.2 で案内追記）。
+- タブ4の先頭説明は3行で、「その場で改名: 入力フォルダー内で名前を変える／出力先へコピー: 共通欄の**出力先フォルダー**へ新しい名前で書き出す」を明示する。`適用先` radio（`inplace` / `copy`、既定 `inplace`）で切り替え、切り替えるとプレビューは「要更新」になる。`check_inputs` はタブ4の**コピーモードのときだけ**「出力先」を検査する（その場で改名では検査しない）。完了メッセージは「変更 n 件 / 変更不要 m 件 / フォルダー: <入力フォルダー>」または「コピー n 件 / 変更不要 m 件 / 入力: ... / 出力: ...」（v2.0.2 で案内追記、v2.1.0 でコピーモード追加）。
 
 ### 3.2 `split_core.py`（共通コア: 継承＋拡張）
 
@@ -194,14 +197,20 @@ v1.0.0 の FR-1〜FR-14 をそのまま継承する。要点だけ再現する�
 | `find_temp_like_names(items) -> list[str]` | プラン | 一時名に似た新名を重複除去して返す（`build_rename_plan` が実行前に拒否） |
 | `check_rename_plan(items, folder) -> None` | プラン | 対象以外の既存ファイルとの衝突を `FileExistsError`（先頭8件＋ほか N 件）で中止 |
 | `apply_renames(items) -> RenameResult` | プラン | 2段階リネーム（FR-R9）。失敗時は元名へ戻す。完了後に最終名の存在を全件確認し、欠けは `ValueError`（FR-R15）。`RenameResult(renamed: int, unchanged: int)` |
+| `build_copy_plan(items, out_folder) -> list[CopyItem]` | プラン | 各新名を `out_folder / new_name` の宛先へ対応付ける（入力は動かさない）。`unchanged` も同じ宛先になる（v2.1.0） |
+| `find_copy_conflicts(plan, out_folder) -> list[str]` | コピープラン | 出力先に既に存在し、コピー元と同一ファイルでない宛先名を返す（大小無視で重複除去）。プレビューの `[衝突]` はこれを使う（FR-R17、v2.1.0） |
+| `check_copy_plan(plan, out_folder) -> None` | コピープラン | 出力先フォルダーが無ければ `ValueError`、既存名があれば `FileExistsError`（先頭8件＋ほか N 件）で実行前に中止（FR-R17、v2.1.0） |
+| `apply_copies(plan) -> CopyResult` | コピープラン | `pathops.copy_into` で1件ずつコピー（元ファイルは動かさない）。コピー元と同一パスの宛先は `unchanged` として数える。失敗時は「入力フォルダーのPDFは無傷です」＋コピー済みの件数を添えた `ValueError`。完了後に `verify_copies` で存在・サイズを全件確認（FR-R16/FR-R18、v2.1.0）。`CopyResult(copied: int, unchanged: int)` |
+| `verify_copies(copied) -> list[str]` | 実行結果 | 各コピーの存在とサイズ一致を確かめ、欠け・不一致・確認不能を文言で返す（空なら全件OK）。`apply_copies` がエラー文言へ組み込む（FR-R18、v2.1.0） |
+| `is_same_file(left, right) -> bool` | パス2つ | `os.path.normcase` で正規化比較。入力と出力が同じフォルダー／同じファイルの判定に使う（v2.1.0） |
 
-`RenameItem` は frozen dataclass（`order: int` / `source: Path` / `new_name: str` / `unchanged: bool`）。
+`RenameItem` は frozen dataclass（`order: int` / `source: Path` / `new_name: str` / `unchanged: bool`）。`CopyItem` は frozen dataclass（`order: int` / `source: Path` / `new_name: str` / `destination: Path`）。
 
 ### 3.7 `preview.py`（継承＋拡張）
 
 - 既存 `PreviewRow`（分割用）は変更しない。
 - 追加: `MergePreviewRow(order, filename, page_count, exists, unreadable)` と `RenamePreviewRow(order, old_name, new_name, unchanged, conflict, duplicate)`、および `display_cells()`。
-- 追加: `build_merge_preview(...)` / `build_rename_preview(...)`（読み取りのみ。書き出し・名前変更なし）。
+- 追加: `build_merge_preview(...)` / `build_rename_preview(...)`（読み取りのみ。書き出し・名前変更・コピーは行わない）。`build_rename_preview` は v2.1.0 で `out_folder` / `copy_mode` を受け、コピーモードでは `[衝突]` を `rename_core.find_copy_conflicts`（＝出力先に既存）で付ける。
 - `truncate_display` は行種別を問わず100件超をまとめる（既存を汎用化）。
 
 ### 3.8 データ仕様（共通の安全規則）
@@ -214,9 +223,9 @@ v1.0.0 の FR-1〜FR-14 をそのまま継承する。要点だけ再現する�
 ### 3.9 `pathops.py`（v2.0.1 で新規・ネットワークドライブ対策）
 
 - 目的: SMB共有（NAS）はローカルフォルダーと同じに扱えないため、「名前を作る・動かす・消す」操作を1箇所に集めて、どの保存先でも同じ結果にする。
-- 公開する関数: `is_unc` / `describe_os_error`（WinError 5 はアクセス権の案内、UNC は混雑の案内を添える）/ `make_staging_dir`（**`~` 始まりを先に作り**、拒否された場合のみ `.` 始まりへ代替）/ `tilde_prefix` / `temp_paths_for`（試作ファイルで実際に作れる一時名を選ぶ。`~` → `.` の順）/ `write_exclusive`（排他作成＋flush＋fsync）/ `move_into`（**宛先に既存ファイルがあれば `os.rename` を呼ぶ前に `FileExistsError`**、その後に再試行→コピー代替）/ `remove_file` / `remove_tree`（削除の再試行）。
+- 公開する関数: `is_unc` / `describe_os_error`（WinError 5 はアクセス権の案内、UNC は混雑の案内を添える）/ `make_staging_dir`（**`~` 始まりを先に作り**、拒否された場合のみ `.` 始まりへ代替）/ `tilde_prefix` / `temp_paths_for`（試作ファイルで実際に作れる一時名を選ぶ。`~` → `.` の順）/ `write_exclusive`（排他作成＋flush＋fsync）/ `copy_into`（v2.1.0 で追加。**宛先に既存があれば `FileExistsError`**、同一フォルダー内の `~pdf_rename_copy_*` 一時名で受け取ってから `move_into`、`finally` で残骸を掃除）/ `move_into`（**宛先に既存ファイルがあれば `os.rename` を呼ぶ前に `FileExistsError`**、その後に再試行→コピー代替）/ `remove_file` / `remove_tree`（削除の再試行）。
 - `move_into` の既存宛先チェックは必須である: `os.rename` は POSIXでもWindowsでも既存ファイルがあると**無条件に上書き**するため、`open("xb")` 相当の排他性を名前移動でも担保する。
-- 定数: `TEMP_NAME_PREFIXES`（`.` 始まりと `~` 始まりの両方）/ `RETRYABLE_WINERRORS = {32, 33, 64}` / `RETRY_DELAYS` / `CLEANUP_DELAYS`。
+- 定数: `TEMP_NAME_PREFIXES`（`.` 始まりと `~` 始まりの両方）/ `COPY_TEMP_PREFIX = ".pdf_rename_copy_"`（v2.1.0。`temp_paths_for` が `~pdf_rename_copy_*` を先に使い、一覧からの除外も自動で効く）/ `RETRYABLE_WINERRORS = {32, 33, 64}` / `RETRY_DELAYS` / `CLEANUP_DELAYS`。
 - `merge_core.TEMP_NAME_PREFIXES` は `pathops.TEMP_NAME_PREFIXES` を再exportしており、`is_temp_name` の互換は保つ。
 - 名前変更は必ず `os.rename` を経由して呼ぶ（テストは `os.rename` を差し替えて失敗を再現する）。
 
@@ -278,7 +287,7 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 
 ### 5.5 配布用最小パッケージ
 
-`python tools\make_dist.py` で `dist\pdf-split-merge-rename\` と `dist\pdf-split-merge-rename-v2.0.1-min.zip` を生成する（v2.0.1 から `pathops.py` を加え12ファイル）。
+`python tools\make_dist.py` で `dist\pdf-split-merge-rename\` と `dist\pdf-split-merge-rename-v2.1.0-min.zip` を生成する（v2.0.1 から `pathops.py` を加え12ファイル。v2.1.0 で追加したコピーモードは既存ファイルのみで動くため、追加ファイルはない）。
 
 ---
 
@@ -288,14 +297,14 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 
 | 検証 | 実測値 |
 | --- | --- |
-| `python -m unittest -v` | `Ran 130 tests` / `OK (skipped=4)`（実実行は `py -3 -m unittest -v`。終了コード0。v2.0.1 で `PathOpsTests` 14件と共有の挙動を模擬する `NasLikeServerTests` 4件、v2.0.2 で `move_into` の上書き拒否・「名前を変えないファイル」との衝突・一時名に似たセル値の拒否・実行後の全件確認・一時名が `~` 始まりであることを検証する5件を追加。`skipped=4` は `NetworkShareTests` で、`PDFSMS_TEST_SHARE` を設定すると実行される） |
+| `python -m unittest -v` | `Ran 150 tests` / `OK (skipped=4)`（実実行は `py -3 -m unittest -v`。終了コード0。v2.0.1 で `PathOpsTests` 14件と共有の挙動を模擬する `NasLikeServerTests` 4件、v2.0.2 で `move_into` の上書き拒否・「名前を変えないファイル」との衝突・一時名に似たセル値の拒否・実行後の全件確認・一時名が `~` 始まりであることを検証する5件、v2.1.0 で `copy_into` の5件（元ファイル保持・既存宛先の拒否・一時名残骸なし・`~pdf_rename_copy_*` を使うこと・書き出し失敗で元ファイル無傷）とコピーモードの14件（計画の宛先・出力先の既存名で中止・出力先フォルダー無しで案内・入力保持・同名は変更不要・コピー済み件数・コピー後の存在/サイズ検証）を追加。`skipped=4` は `NetworkShareTests` で、`PDFSMS_TEST_SHARE` を設定すると実行される） |
 | `NetworkShareTests`（実際の共有フォルダー） | `PDFSMS_TEST_SHARE=\\localhost\pdftest` で `python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests` → `Ran 4 tests` / `OK`（分割3ファイル・結合1件・リネーム2件・プレビュー3種。SMB共有上で作成・名前変更・削除が完了し、一時名の残骸なしを確認。NAS実機でも同じ手順で確認できる） |
-| `tools\verify_independent.py` | `TOTAL: 45/45`（終了コード0。1〜14: 分割 / 15〜31: FR-M1〜M14 / 32〜45: FR-R1〜R13） |
-| `tools\verify_assistant.py` | `TOTAL: 65/65`（終了コード0。v1.0.0 の42項目を保持し、タブ4枚化と FR-C・FR-M・FR-R のGUI検査23項目を追加） |
+| `tools\verify_independent.py` | `TOTAL: 51/51`（終了コード0。1〜14: 分割 / 15〜31: FR-M1〜M14 / 32〜45: FR-R1〜R13 / 46〜51: FR-R16〜R18 のコピーモード。46: 入力無傷で出力先に新名が揃う / 47: 入力と同じフォルダーへコピーすると元名も残る / 48: 出力先の既存名で実行前に中止 / 49: 出力先フォルダー無しで案内 / 50: 出力先の各ファイルは元と同じサイズ・ページ数 / 51: 「書いたのに残らない」共有を模擬してエラーで案内） |
+| `tools\verify_assistant.py` | `TOTAL: 71/71`（終了コード0。v1.0.0 の42項目を保持し、タブ4枚化と FR-C・FR-M・FR-R のGUI検査23項目、v2.1.0 でコピーモードのGUI検査6項目（適用先radio・出力先未指定で警告して実行しない・プレビューでも書き出さない・完了報告のコピー件数・出力先のサイズ・既存名で中止）を追加） |
 | `tools\verify_gui_display.py` | `TOTAL: 1/1`（実ウィンドウ 724x713 px。タブ4枚・列構成4種・結合後ファイル名の自動補完 `input` を確認） |
 | `tools\run_sample_split.py` | `TOTAL: 13/13`（終了コード0） |
 | `tools\run_sample_merge_rename.py` | `TOTAL: 23/23`（終了コード0。結合11項目 / リネーム12項目。`samples\検証結果\結合\結合結果.pdf` は8ページ） |
-| 配布 zip | `dist\pdf-split-merge-rename-v2.0.2-min.zip` 37,393 バイト / 12ファイル / SHA-256 `ea4ae622bf8b391867a441db9ce85d2c270177fea274cd10b0f0c0a02586cd88`（2026-11-27 生成時の実測。zip はファイルの更新時刻も格納されるため、中身が同じでも再実行すると SHA-256 は変わる。受け取り用フォルダー `dist\pdf-split-merge-rename\` は12ファイル 100,051 バイト。展開検査で12エントリ・破損なし PASS。v2.0.1 版は 35,822 B・12ファイル、v2.0.0 版は 31,726 B・11ファイルだった） |
+| 配布 zip | `dist\pdf-split-merge-rename-v2.1.0-min.zip` 39,955 バイト / 12ファイル / SHA-256 `02b12c1e1d4eb71f46e374676a1bfe16fbad2fce2d50825067b945de12e7b513`（2026-11-27 生成時の実測。zip はファイルの更新時刻も格納されるため、中身が同じでも再実行すると SHA-256 は変わる。受け取り用フォルダー `dist\pdf-split-merge-rename\` は12ファイル 111,972 バイト。展開検査で12エントリ・破損なし PASS。v2.0.2 版は 37,393 B、v2.0.1 版は 35,822 B・12ファイル、v2.0.0 版は 31,726 B・11ファイルだった） |
 | `tools\verify_release_check.py` | `TOTAL: 48/48`（終了コード0。補助役の検証とは別観点: 自然順の境界（001/003/008/9/10・20/100・a9/a10）、結合順序をページ幅で実測（結果PDFの幅が 101,101,103,103,108,108,109,109,110,110）、既存出力での中止、入力PDFと同名の出力名を拒否、不正名4種（`a/b` / `CON` / 空 / `x.docx`）、0件・1件の案内、**同一フォルダー出力は初回成功・2回目中止**、暗号化＋破損を1回のエラーでまとめて報告、失敗時に出力なし、リネームの自然順割り当て・再実行は全て `[変更不要]`・セル別ルール・名前入替（2段階ステージング）・同名フォルダーとの衝突で中止（ファイルもフォルダーも不変）、`os.rename` を模擬失敗させて**全件が元名へ戻る**ことと一時名残骸なし、重複名は実行で中止・プレビューは通す、GUIのタブ4枚・結合後名の自動補完とユーザー編集名の保持） |
 
 ---
@@ -308,8 +317,8 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 - 結合後のファイルが1000ページを超える場合も動作するが、メモリ上で PdfWriter がページを参照するため大きなPDFの結合は時間とかさが増える。
 - 自然順は数字連なりを最大でも整数として扱う。桁数が極端に大きい数字連なりは文字列比較にフォールバックして順序の安定性を保つ。
 - **ネットワークドライブ（NAS共有）** は入力・出力ともにそのまま指定できる（v2.0.1 / FR-C11）。ただし共有側の設定しだいで書き込めないことがあり、その場合は「アクセスが拒否されました。共有フォルダーが読み取り専用になっていないか、アクセス権を確認してください」を案内する。共有が一時的に混雑して名前変更が失敗するケースは再試行とコピー代替で吸収し、吸収できなかった場合のみ「保存先はネットワーク上の共有フォルダーです。共有が一時的に混雑している可能性があります」を添えて中止する（リネームは元の名前へ戻したうえで）。それでも保存できない場合は、表示されたエラー文言全体と保存先の共有パスをそのまま報告すること。
-- 共有フォルダーでは `.` 始まりのファイル・フォルダーが見えないことがある（Samba 既定の `hide dot files` など）。v2.0.2 は一時名・一時フォルダーを `~pdf_split_*` / `~pdf_merge_*` / `~pdf_rename_tmp_*` で作り、`~` を拒否する共有でのみ `.` 始まりへ戻る。残骸を見つけたら上記の共有パスとともに報告する。
-- **リネームタブは「入力フォルダー」内で名前を変える**（コピーを作らず、共通欄の「出力先フォルダー」は使わない）。別フォルダーへ名前を変えたコピーを置きたい場合は、コピーを先にそのフォルダーへ置いてからそのフォルダーを入力フォルダーにする。UIにも同じ案内を表示する（v2.0.2）。
+- 共有フォルダーでは `.` 始まりのファイル・フォルダーが見えないことがある（Samba 既定の `hide dot files` など）。v2.0.2 は一時名・一時フォルダーを `~pdf_split_*` / `~pdf_merge_*` / `~pdf_rename_tmp_*` で作り、`~` を拒否する共有でのみ `.` 始まりへ戻る（v2.1.0 のコピーは `~pdf_rename_copy_*`）。残骸を見つけたら上記の共有パスとともに報告する。
+- **リネームタブの「適用先」は2択**（v2.1.0 / FR-R16）: 既定は「入力フォルダー内で名前を変える」で、このときはコピーを作らず共通欄の「出力先フォルダー」を使わない。もう1つは「出力先フォルダーへコピーして名前を変える」で、入力のPDFを動かさずに共通欄の出力先へ新しい名前で書き出す（このモードでは出力先が必須）。元の名前を残したい利用者・「名前を変えたらPDFが消えたように見えた」利用者はこちらを選ぶ。UIにも同じ案内を表示する。
 - 「PDFが消えた」ように見える主な原因は、①共有サーバーが一時名を隠している、②名前変更が共有に反映されず残らなかった、の2つ。v2.0.2 は ①を `~` 始まりの一時名で避け、②を実行後の全件確認（FR-R15）でエラーとして表面化させる。どちらの場合も、フォルダーの表示更新と隠しファイル表示で中身を確認し、表示されたエラー文言をそのまま報告すること。
 
 ---
@@ -332,4 +341,5 @@ python -m unittest -v test_pdf_split_merge_rename.NetworkShareTests
 | 2026-11-24 | 2〜7 | 実装完了に伴い FR-C / FR-M / FR-R の要件と各スクリプトの仕様を確定。6章に実測値（単体テスト 103 件 OK / 独立検証 45/45 / 別系統検証 65/65 / リリース前検査 48/48 / サンプル実実行 13/13・23/23 / GUI 724x713・タブ4枚 / 配布zip 31,726 B・11ファイル）、7章に留意点、8章に拡張アイデアを追記 |
 | 2026-11-26 | 2・3・6・7 | **v2.0.1: ネットワークドライブ（NAS共有）対応**。`pathops.py` を新規追加し、分割・結合・リネームの「一時書き出し → 名前変更 → 後片付け」を共通補助へ集約（`.` 始まりを拒否する共有では `~` 始まりの一時名、WinError 32/33/64 の再試行、コピー→削除の代替、`fsync` で内容確定、削除の再試行、アクセス権・混雑の案内文言）。FR-C11 を追加、3.8 を更新、3.9 を新設、7章に留意点。テスト 103→125 件（共有の挙動を模擬する `NasLikeServerTests`、実共有を使う `NetworkShareTests`）。配布ファイル 11→12 |
 | 2026-11-27 | 2・3・7 | **v2.0.2: 「Excelでリネーム」の安全性を強化**（利用者から「入力フォルダーのPDFが上書き・削除され、出力先フォルダーが空」との報告）。① `pathops.move_into` が宛先に既存ファイルがある場合、`os.rename`（既存名を無条件に上書きする）を呼ぶ前に `FileExistsError` で中止 ② `find_rename_conflicts` が「今回は名前を変えないファイル」の名前も障害物として扱い、新名がそれと同名なら衝突で中止（FR-R7 修正）③ 一時名に似たセル値（`~pdf_rename_` / `.pdf_rename_` 始まり）を実行前に拒否（FR-R14 新設）④ 実行後に最終名の存在を全件確認し、欠けは確認手順つきの `ValueError` で報告（FR-R15 新設）⑤ 一時名・一時フォルダーを `~` 始まり優先へ変更（共有が `.` 始まりを隠すと「PDFが消えた」と誤解される）⑥ リネームタブのUIに「同じフォルダー内で名前を変える／出力先フォルダーは使わない」を明記。ローカル再現（12シナリオ）では消失が確認できておらず、NAS共有側の挙動への防御的ハードニングとして実施。テスト 125→130 件 |
+| 2026-11-27 | 2・3・6・7 | **v2.1.0: 「Excelでリネーム」に「出力先フォルダーへコピーして名前を変える」を追加**（聞き取りで、本当の要望は「出力先フォルダーにコピーを作りながら名前を変える」だったと判明。既存のその場で改名は仕様どおり動作していた）。FR-R16〜FR-R18 を新設。`pathops.copy_into`（同一フォルダー内の `~pdf_rename_copy_*` 一時名で受け取り → `move_into`、既存宛先は `FileExistsError`、`finally` で残骸掃除）、`rename_core` に `CopyItem` / `CopyResult` / `is_same_file` / `build_copy_plan` / `find_copy_conflicts` / `check_copy_plan` / `apply_copies` / `verify_copies` を追加（実行前に出力先の既存名を検査、完了後に存在とサイズを全件確認）、`preview.build_rename_preview` に `out_folder` / `copy_mode`（コピーモードの `[衝突]` は「出力先に既存」）、GUIに「適用先」radio（既定は従来のその場で改名。コピー時は「出力先フォルダー」が必須）。テスト 130→150 件（`CopyIntoTests` 5 / `CopyModeTests` 14 / GUI 1）、独立検証 45→51、別系統検証 65→71。配布 zip 39,955 B・12ファイル |
 

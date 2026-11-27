@@ -173,16 +173,32 @@ def build_merge_preview(folder: Path, out_name: str, output_dir: Path) -> list[M
     return rows
 
 
-def build_rename_preview(folder: Path, excel_path: Path, sheet_name: str, cell: str, mode: str) -> list[RenamePreviewRow]:
-    """リネームプレビュー行を全件組み立てる（名前変更は一切しない）.
+def build_rename_preview(
+    folder: Path,
+    excel_path: Path,
+    sheet_name: str,
+    cell: str,
+    mode: str,
+    out_folder: Path | None = None,
+    copy_mode: bool = False,
+) -> list[RenamePreviewRow]:
+    """リネームプレビュー行を全件組み立てる（名前変更もコピーも行わない）.
 
     実行時と同一の rename_core.build_rename_plan を使い、プレビューでは
     重複をエラーにせず `[重複]` 印を付ける（FR-R11）。
+    copy_mode では `[衝突]` を「出力先に同じ名前が既にある」の意味で判定する（FR-R16）。
     """
     items = rename_core.build_rename_plan(
         folder, excel_path, sheet_name, cell, mode, abort_on_duplicates=False,
     )
-    conflict_names = {name.casefold() for name in rename_core.find_rename_conflicts(items, folder)}
+    if copy_mode and out_folder is not None:
+        conflict_names = {
+            name.casefold() for name in rename_core.find_copy_conflicts(
+                rename_core.build_copy_plan(items, out_folder)
+            )
+        }
+    else:
+        conflict_names = {name.casefold() for name in rename_core.find_rename_conflicts(items, folder)}
 
     counts: dict[str, int] = {}
     for item in items:

@@ -1157,6 +1157,196 @@ class RenameExecutionTests(RenameDataMixin, unittest.TestCase):
         self.assertTrue((self.inbox / items[0].new_name).is_file())  # 残った分はそのまま残る
 
 
+class CopyIntoTests(unittest.TestCase):
+    """pathops.copy_into: 元ファイルを残して宛先に置く（既存ファイルは上書きしない）."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.folder = Path(self._tmp.name)
+
+    def test_copy_into_keeps_source_and_writes_destination(self):
+        source = self.folder / "元.pdf"
+        source.write_bytes(b"A" * 120)
+        pathops.copy_into(source, self.folder / "宛先.pdf")
+        self.assertEqual((self.folder / "元.pdf").read_bytes(), b"A" * 120)
+        self.assertEqual((self.folder / "宛先.pdf").read_bytes(), b"A" * 120)
+
+    def test_copy_into_refuses_existing_destination(self):
+        (self.folder / "元.pdf").write_bytes(b"new")
+        target = self.folder / "宛先.pdf"
+        target.write_bytes(b"old")
+        with self.assertRaises(FileExistsError) as caught:
+            pathops.copy_into(self.folder / "元.pdf", target)
+        self.assertIn("上書きは行いません", str(caught.exception))
+        self.assertEqual(target.read_bytes(), b"old")
+
+    def test_copy_into_leaves_no_temp_file_behind(self):
+        (self.folder / "元.pdf").write_bytes(b"data")
+        pathops.copy_into(self.folder / "元.pdf", self.folder / "宛先.pdf")
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()), ["元.pdf", "宛先.pdf"])
+
+    def test_copy_into_uses_visible_tilde_temp_name(self):
+        (self.folder / "元.pdf").write_bytes(b"data")
+        seen: list[str] = []
+        real_rename = os.rename
+
+        def spy_rename(src, dst):
+            seen.append(Path(src).name)
+            real_rename(src, dst)
+
+        os.rename = spy_rename
+        try:
+            pathops.copy_into(self.folder / "元.pdf", self.folder / "宛先.pdf")
+        finally:
+            os.rename = real_rename
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0].startswith("~pdf_rename_copy_"), seen[0])
+
+    def test_copy_into_reports_failure_without_touching_source(self):
+        source = self.folder / "元.pdf"
+        source.write_bytes(b"data")
+        with patch("pathops.shutil.copyfileobj", side_effect=OSError("共有が混雑しています")):
+            with self.assertRaises(OSError):
+                pathops.copy_into(source, self.folder / "宛先.pdf")
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()), ["元.pdf"])
+
+
+class CopyModeTests(RenameDataMixin, unittest.TestCase):
+    """FR-R16〜FR-R18: 出力先へコピーしながら名前を変える（入力フォルダーのPDFは無傷）."""
+
+    def setUp(self):
+        super().setUp()
+        self.outbox = self.root / "outbox"
+        self.outbox.mkdir()
+        self.add_pdf("a.pdf")
+        self.add_pdf("b.pdf")
+        make_excel(self.excel, {"A1": "報告書"})
+
+    def plan(self, out_folder: Path | None = None) -> list[rename_core.CopyItem]:
+        """入力フォルダーのPDF2件を 報告書_001.pdf / 報告書_002.pdf へコピーする計画."""
+        items = rename_core.build_rename_plan(self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        return rename_core.build_copy_plan(items, out_folder or self.outbox)
+
+    def inbox_pdfs(self) -> list[str]:
+        return sorted(p.name for p in self.inbox.iterdir() if p.suffix == ".pdf")
+
+    def test_copy_plan_points_at_output_folder(self):
+        plan = self.plan()
+        self.assertEqual(
+            [item.destination for item in plan],
+            [self.outbox / "報告書_001.pdf", self.outbox / "報告書_002.pdf"],
+        )
+        self.assertEqual([item.source.name for item in plan], ["a.pdf", "b.pdf"])
+
+    def test_existing_name_in_output_folder_aborts(self):
+        make_blank_pdf(self.outbox / "報告書_001.pdf")
+        with self.assertRaises(FileExistsError) as caught:
+            rename_core.check_copy_plan(self.plan(), self.outbox)
+        self.assertIn("出力先に同じ名前のファイルが既にあります", str(caught.exception))
+        self.assertEqual([p.name for p in self.outbox.iterdir()], ["報告書_001.pdf"])
+
+    def test_existing_non_pdf_name_in_output_folder_is_a_conflict(self):
+        (self.outbox / "報告書_002.pdf").write_text("PDFではない", encoding="utf-8")
+        with self.assertRaises(FileExistsError) as caught:
+            rename_core.check_copy_plan(self.plan(), self.outbox)
+        self.assertIn("報告書_002.pdf", str(caught.exception))
+
+    def test_missing_output_folder_is_reported(self):
+        missing = self.root / "無いフォルダー"
+        with self.assertRaises(ValueError) as caught:
+            rename_core.check_copy_plan(self.plan(missing), missing)
+        self.assertIn("出力先フォルダーが見つかりません", str(caught.exception))
+
+    def test_same_folder_same_name_is_not_a_conflict(self):
+        same = [rename_core.RenameItem(order=1, source=self.inbox / "a.pdf", new_name="a.pdf", unchanged=True)]
+        rename_core.check_copy_plan(rename_core.build_copy_plan(same, self.inbox), self.inbox)
+
+    def test_copies_land_in_output_folder_and_sources_remain(self):
+        result = rename_core.apply_copies(self.plan())
+        self.assertEqual((result.copied, result.unchanged), (2, 0))
+        self.assertEqual(self.inbox_pdfs(), ["a.pdf", "b.pdf"])
+        self.assertEqual(
+            sorted(p.name for p in self.outbox.iterdir()), ["報告書_001.pdf", "報告書_002.pdf"]
+        )
+
+    def test_copy_into_input_folder_keeps_original_names(self):
+        result = rename_core.apply_copies(self.plan(self.inbox))
+        self.assertEqual(result.copied, 2)
+        self.assertEqual(self.inbox_pdfs(), ["a.pdf", "b.pdf", "報告書_001.pdf", "報告書_002.pdf"])
+
+    def test_copy_mode_never_renames_or_removes_sources(self):
+        before = {p.name: p.read_bytes() for p in self.inbox.iterdir() if p.suffix == ".pdf"}
+        rename_core.apply_copies(self.plan())
+        after = {p.name: p.read_bytes() for p in self.inbox.iterdir() if p.suffix == ".pdf"}
+        self.assertEqual(before, after)
+
+    def test_same_folder_same_name_counts_as_unchanged(self):
+        same = [rename_core.RenameItem(order=1, source=self.inbox / "a.pdf", new_name="a.pdf", unchanged=True)]
+        result = rename_core.apply_copies(rename_core.build_copy_plan(same, self.inbox))
+        self.assertEqual((result.copied, result.unchanged), (0, 1))
+        self.assertEqual(self.inbox_pdfs(), ["a.pdf", "b.pdf"])
+
+    def test_copy_failure_reports_sources_are_safe(self):
+        with patch("pathops.shutil.copyfileobj", side_effect=OSError("共有が混雑しています")):
+            with self.assertRaises(ValueError) as caught:
+                rename_core.apply_copies(self.plan())
+        self.assertIn("入力フォルダーのPDFは無傷です", str(caught.exception))
+        self.assertEqual(list(self.outbox.iterdir()), [])
+        self.assertEqual(self.inbox_pdfs(), ["a.pdf", "b.pdf"])
+
+    def test_partial_copy_reports_how_many_are_done(self):
+        real_copyfileobj = shutil.copyfileobj
+        calls = {"count": 0}
+
+        def flaky_copyfileobj(source_stream, target_stream, *args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise OSError("共有が混雑しています")
+            return real_copyfileobj(source_stream, target_stream, *args, **kwargs)
+
+        with patch("pathops.shutil.copyfileobj", side_effect=flaky_copyfileobj):
+            with self.assertRaises(ValueError) as caught:
+                rename_core.apply_copies(self.plan())
+        self.assertIn("1 件はコピー済みです", str(caught.exception))
+        self.assertEqual(len(list(self.outbox.iterdir())), 1)
+
+    def test_destination_missing_after_copy_is_reported(self):
+        real_copy_into = pathops.copy_into
+
+        def vanishing_copy_into(source: Path, destination: Path) -> None:
+            real_copy_into(source, destination)
+            os.remove(destination)
+
+        with patch("rename_core.pathops.copy_into", side_effect=vanishing_copy_into):
+            with self.assertRaises(ValueError) as caught:
+                rename_core.apply_copies(self.plan())
+        self.assertIn("出力先に正しく残っていません", str(caught.exception))
+        self.assertIn("報告書_001.pdf", str(caught.exception))
+        self.assertEqual(self.inbox_pdfs(), ["a.pdf", "b.pdf"])
+
+    def test_size_mismatch_after_copy_is_reported(self):
+        real_copy_into = pathops.copy_into
+
+        def truncated_copy_into(source: Path, destination: Path) -> None:
+            real_copy_into(source, destination)
+            destination.write_bytes(b"0")
+
+        with patch("rename_core.pathops.copy_into", side_effect=truncated_copy_into):
+            with self.assertRaises(ValueError) as caught:
+                rename_core.apply_copies(self.plan())
+        self.assertIn("サイズが一致しません", str(caught.exception))
+
+    def test_preview_marks_conflicts_against_output_folder_in_copy_mode(self):
+        make_blank_pdf(self.outbox / "報告書_002.pdf")
+        rows = preview.build_rename_preview(
+            self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ, self.outbox, True,
+        )
+        self.assertEqual([row.conflict for row in rows], [False, True])
+        inplace_rows = preview.build_rename_preview(self.inbox, self.excel, "Sheet", "A1", modes.BASE_SEQ)
+        self.assertEqual([row.conflict for row in inplace_rows], [False, False])
+
+
 class MergeRenamePreviewTests(MergeDataMixin, unittest.TestCase):
     """FR-M13/FR-R11: プレビュー一覧（書き出し・名前変更を行わない）."""
 
@@ -1223,6 +1413,16 @@ class GuiWordingTests(unittest.TestCase):
         self.assertTrue(hasattr(gui, "main"))
         self.assertEqual(gui.PREVIEW_VISIBLE_ROWS, 12)
         self.assertEqual(gui.STATE_STALE, "入力変更あり: プレビューを更新してください")
+
+    def test_rename_target_choices_are_exposed(self):
+        """FR-R16: 適用先（その場で改名 / 出力先へコピー）の2択が並んでいる."""
+        import pdf_split_merge_rename as gui
+
+        self.assertEqual(gui.RENAME_TARGET_INPLACE, "inplace")
+        self.assertEqual(gui.RENAME_TARGET_COPY, "copy")
+        self.assertEqual(
+            list(gui.RENAME_TARGET_LABELS), [gui.RENAME_TARGET_INPLACE, gui.RENAME_TARGET_COPY]
+        )
 
 
 def os_error(code: int, message: str) -> OSError:

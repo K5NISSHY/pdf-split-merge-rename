@@ -29,6 +29,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 import merge_core
 import modes
+import pathops
 import preview
 import rename_core
 import split_core
@@ -562,12 +563,111 @@ def verify_rename(root: Path) -> None:
     )
 
 
+def verify_copy(root: Path) -> None:
+    """FR-R16〜FR-R18: 出力先へコピーしながら名前を変える（入力のPDFは無傷）."""
+    src = root / "copy_in"
+    src.mkdir()
+    make_pdf(src / "2_a.pdf", 2)
+    make_pdf(src / "8_b.pdf", 1)
+    excel = root / "copy_names.xlsx"
+    make_excel(excel, {"A1": "報告書"})
+    out = root / "copy_out"
+    out.mkdir()
+    before = digest(src)
+
+    def plan(target: Path):
+        items = rename_core.build_rename_plan(src, excel, "Sheet", "A1", modes.BASE_SEQ)
+        return rename_core.build_copy_plan(items, target)
+
+    result = rename_core.apply_copies(plan(out))
+    check(
+        "46. FR-R16 コピー実行で入力のPDFは無傷、出力先に新しい名前が揃う",
+        (result.copied, result.unchanged) == (2, 0)
+        and digest(src) == before
+        and sorted(p.name for p in out.iterdir()) == ["報告書_001.pdf", "報告書_002.pdf"]
+        and temp_names(out) == [],
+    )
+
+    same = root / "copy_same"
+    same.mkdir()
+    make_pdf(same / "a.pdf", 1)
+    make_excel(root / "copy_same_names.xlsx", {"A1": "報告書"})
+    same_result = rename_core.apply_copies(
+        rename_core.build_copy_plan(
+            rename_core.build_rename_plan(same, root / "copy_same_names.xlsx", "Sheet", "A1", modes.BASE_SEQ), same,
+        )
+    )
+    check(
+        "47. FR-R16 入力と同じフォルダーへコピーすると元の名前も残る（名前だけ増える）",
+        same_result.copied == 1
+        and sorted(p.name for p in same.iterdir() if p.suffix == ".pdf") == ["a.pdf", "報告書_001.pdf"],
+    )
+
+    blocked = root / "copy_blocked"
+    blocked.mkdir()
+    make_pdf(blocked / "報告書_001.pdf", 1)
+    blocked_message = ""
+    try:
+        rename_core.check_copy_plan(plan(blocked), blocked)
+    except FileExistsError as exc:
+        blocked_message = str(exc)
+    check(
+        "48. FR-R17 出力先に同じ名前が既にあると実行前に中止し、上書きしない",
+        "出力先に同じ名前のファイルが既にあります" in blocked_message
+        and sorted(p.name for p in blocked.iterdir()) == ["報告書_001.pdf"],
+    )
+
+    missing_folder = root / "copy_無いフォルダー"
+    missing_message = ""
+    try:
+        rename_core.check_copy_plan(plan(missing_folder), missing_folder)
+    except ValueError as exc:
+        missing_message = str(exc)
+    check(
+        "49. FR-R17 出力先フォルダーが見つからない場合は実行前に案内する",
+        "出力先フォルダーが見つかりません" in missing_message and not missing_folder.exists(),
+    )
+
+    check(
+        "50. FR-R18 コピー後のファイルは元ファイルと同じサイズ・ページ数で読める",
+        all(
+            (out / name).stat().st_size == (src / original).stat().st_size
+            and page_count(out / name) == page_count(src / original)
+            for name, original in (("報告書_001.pdf", "2_a.pdf"), ("報告書_002.pdf", "8_b.pdf"))
+        ),
+    )
+
+    vanishing_out = root / "copy_vanish"
+    vanishing_out.mkdir()
+    real_copy_into = pathops.copy_into
+
+    def vanishing_copy_into(source: Path, destination: Path) -> None:
+        real_copy_into(source, destination)
+        os.remove(destination)  # 共有で「書いたのに残らない」真似
+
+    pathops.copy_into = vanishing_copy_into
+    vanish_message = ""
+    try:
+        rename_core.apply_copies(plan(vanishing_out))
+    except ValueError as exc:
+        vanish_message = str(exc)
+    finally:
+        pathops.copy_into = real_copy_into
+    check(
+        "51. FR-R18 コピーしたファイルが出力先に残らなければエラーで案内する（入力は無傷）",
+        "出力先に正しく残っていません" in vanish_message
+        and digest(src) == before
+        and list(vanishing_out.iterdir()) == [],
+    )
+
+
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix=".pdf_split_verify_", dir=str(PROJECT_ROOT)))
     try:
         verify(root)
         verify_merge(root)
         verify_rename(root)
+        verify_copy(root)
     except Exception as exc:  # 想定外例外も合否として計上する
         check(f"検証スクリプトが想定外のエラーで終了した: {exc}", False)
     finally:

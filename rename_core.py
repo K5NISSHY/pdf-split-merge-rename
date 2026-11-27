@@ -1,4 +1,9 @@
-"""ExcelでPDFをリネームするコア処理（FR-R1〜FR-R13）.
+"""ExcelでPDFをリネームするコア処理（FR-R1〜FR-R17）.
+
+適用先は2つ選べる:
+
+- **入力フォルダー内で名前を変える**（従来どおり。コピーは作らない）
+- **出力先フォルダーへコピーしながら名前を変える**（FR-R16。入力フォルダーのPDFは無傷のまま）
 
 入力フォルダーの直下 `.pdf` を自然順に並べ、既存の命名関数
 （`modes.build_filenames`）へ「ページ数」の代わりに「ファイル数」を渡して
@@ -10,12 +15,14 @@
 一時名は共有で隠れない「~」始まりを先に選ぶ。
 名前変更のあとに新しい名前のファイルが揃っているかを確かめ、揃わなければ
 その場でエラーとして報告する（共有では成功したように見えて残らないことがあるため）。
-PDF・Excelの内容は一切変更せず、名前だけを変える。
+コピー実行後は、出力先に残っていることとサイズが元ファイルと一致することを1件ずつ確かめる。
+PDF・Excelの内容は一切変更せず、名前だけを変える（コピーでは元ファイルも残す）。
 
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -194,3 +201,119 @@ def apply_renames(items: list[RenameItem]) -> RenameResult:
             + extra
         )
     return RenameResult(renamed=len(targets), unchanged=unchanged_count)
+
+
+# --- 出力先へコピーしながら名前を変える実行（元ファイルは変更しない） ---
+
+
+@dataclass(frozen=True)
+class CopyItem:
+    """コピー1件（元ファイルはそのままで、出力先に新しい名前で書き出す）."""
+
+    order: int
+    source: Path
+    new_name: str
+    destination: Path
+
+
+@dataclass(frozen=True)
+class CopyResult:
+    """コピー実行結果（コピーした件数と、同じ場所・同じ名前で変更不要だった件数）."""
+
+    copied: int
+    unchanged: int
+
+
+def is_same_file(left: Path, right: Path) -> bool:
+    """同じフォルダーの同じ名前かどうか（Windowsは大文字小文字と区切り記号を区別しない）."""
+    return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
+def build_copy_plan(items: list[RenameItem], out_folder: Path) -> list[CopyItem]:
+    """リネーム計画を「出力先へコピーする計画」へ読み替える（FR-R16）."""
+    return [
+        CopyItem(
+            order=item.order,
+            source=item.source,
+            new_name=item.new_name,
+            destination=out_folder / item.new_name,
+        )
+        for item in items
+    ]
+
+
+def find_copy_conflicts(plan: list[CopyItem]) -> list[str]:
+    """出力先に既にあってコピーできない名前を返す（元ファイル自身は除く）."""
+    conflicts: list[str] = []
+    reported: set[str] = set()
+    for item in plan:
+        key = item.new_name.casefold()
+        if key in reported or not item.destination.exists():
+            continue
+        if is_same_file(item.source, item.destination):  # 元ファイルと同じ場所・同じ名前
+            continue
+        conflicts.append(item.new_name)
+        reported.add(key)
+    return conflicts
+
+
+def check_copy_plan(plan: list[CopyItem], out_folder: Path) -> None:
+    """コピーを1つも始める前に、出力先の状態を検査して中止する（FR-R17）."""
+    if not out_folder.is_dir():
+        raise ValueError("出力先フォルダーが見つかりません。存在するフォルダーを指定してください。")
+    conflicts = find_copy_conflicts(plan)
+    if conflicts:
+        preview = "\n".join(conflicts[:MAX_LISTED])
+        extra = f"\nほか {len(conflicts) - MAX_LISTED} 件" if len(conflicts) > MAX_LISTED else ""
+        raise FileExistsError(
+            "出力先に同じ名前のファイルが既にあります。上書きは行いません。\n" + preview + extra
+        )
+
+
+def apply_copies(plan: list[CopyItem]) -> CopyResult:
+    """出力先へコピーする。入力フォルダーのPDFは変更しないため、失敗しても戻す作業は不要（FR-R16）."""
+    copied: list[CopyItem] = []
+    unchanged = 0
+    for item in plan:
+        if is_same_file(item.source, item.destination):
+            unchanged += 1
+            continue
+        try:
+            pathops.copy_into(item.source, item.destination)
+        except OSError as exc:
+            done = f"\n{len(copied)} 件はコピー済みです。" if copied else ""
+            raise ValueError(
+                "PDFをコピーできませんでした。入力フォルダーのPDFは無傷です。\n"
+                + pathops.describe_os_error(exc, item.destination.parent)
+                + done
+            ) from exc
+        copied.append(item)
+    problems = verify_copies(copied)
+    if problems:
+        preview = "\n".join(problems[:MAX_LISTED])
+        extra = f"\nほか {len(problems) - MAX_LISTED} 件" if len(problems) > MAX_LISTED else ""
+        raise ValueError(
+            "コピーしたはずのファイルが出力先に正しく残っていません。入力フォルダーのPDFは無傷です。\n"
+            "出力先フォルダーをF5で更新して確認し、ネットワークドライブの場合は共有の再接続もお試しください。\n"
+            + preview
+            + extra
+        )
+    return CopyResult(copied=len(copied), unchanged=unchanged)
+
+
+def verify_copies(copied: list[CopyItem]) -> list[str]:
+    """コピー結果を1件ずつ確かめる（共有では「書いたのに残らない」「途中で切れる」が起きうる）."""
+    problems: list[str] = []
+    for item in copied:
+        if not item.destination.is_file():
+            problems.append(f"{item.new_name}（出力先に見当たりません）")
+            continue
+        try:
+            written = item.destination.stat().st_size
+            original = item.source.stat().st_size
+        except OSError:
+            problems.append(f"{item.new_name}（確認できません）")
+            continue
+        if written != original:
+            problems.append(f"{item.new_name}（サイズが一致しません: {written} / {original} バイト）")
+    return problems

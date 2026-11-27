@@ -37,6 +37,14 @@ TAB_LABELS = {
     TAB_RENAME: "Excelでリネーム",
 }
 
+# FR-R16: リネームの適用先（その場で改名 / 出力先へコピーして改名）
+RENAME_TARGET_INPLACE = "inplace"
+RENAME_TARGET_COPY = "copy"
+RENAME_TARGET_LABELS = {
+    RENAME_TARGET_INPLACE: "入力フォルダー内で名前を変える",
+    RENAME_TARGET_COPY: "出力先フォルダーへコピーして名前を変える",
+}
+
 # FR-C5: タブ別の列構成 (列ID, 見出し, 幅, 位置, 伸縮)
 TAB_COLUMNS = {
     modes.BASE_SEQ: (
@@ -80,6 +88,7 @@ class UnifiedPdfSplitApp:
         self.merge_name_var = tk.StringVar()
         self.rename_rule_var = tk.StringVar(value=modes.RENAME_RULE_BASE_SEQ)
         self.rename_cell_var = tk.StringVar(value="A1")
+        self.rename_target_var = tk.StringVar(value=RENAME_TARGET_INPLACE)
         self.preview_rows: list[preview.PreviewRow | preview.MergePreviewRow | preview.RenamePreviewRow] = []
         self.preview_active = False
         self.merge_name_autofilled = False  # FR-M5: 自動補完した値かどうか（ユーザー編集名は変えない）
@@ -146,8 +155,9 @@ class UnifiedPdfSplitApp:
         # タブ4: Excelでリネーム
         tk.Label(
             tab_rename,
-            text="入力フォルダーの直下のPDFを自然順に並べ、Excelの命名ルールで同じフォルダー内で名前を変えます。\n"
-                 "コピーは作らず、上書きもしません。共通欄の「出力先フォルダー」はこのタブでは使いません。",
+            text="入力フォルダーの直下のPDFを自然順に並べ、Excelの命名ルールで名前を変えます。上書きはしません。\n"
+                 "その場で改名: 同じフォルダー内で名前を変えます（コピーは作りません）。\n"
+                 "出力先へコピー: 入力フォルダーのPDFを残したまま、共通欄の「出力先フォルダー」へ新しい名前で書き出します。",
             anchor="w",
             justify="left",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
@@ -159,13 +169,21 @@ class UnifiedPdfSplitApp:
                 rule_box, text=modes.RENAME_RULE_LABELS[rule_id],
                 variable=self.rename_rule_var, value=rule_id,
             ).pack(side="left", padx=(0, 14))
-        tk.Label(tab_rename, text="セル番地", width=20, anchor="w").grid(row=2, column=0, sticky="w")
-        tk.Entry(tab_rename, textvariable=self.rename_cell_var, width=20).grid(row=2, column=1, sticky="w")
+        tk.Label(tab_rename, text="適用先", width=20, anchor="w").grid(row=2, column=0, sticky="w")
+        target_box = tk.Frame(tab_rename)
+        target_box.grid(row=2, column=1, columnspan=2, sticky="w")
+        for target_id in (RENAME_TARGET_INPLACE, RENAME_TARGET_COPY):
+            tk.Radiobutton(
+                target_box, text=RENAME_TARGET_LABELS[target_id],
+                variable=self.rename_target_var, value=target_id,
+            ).pack(side="left", padx=(0, 14))
+        tk.Label(tab_rename, text="セル番地", width=20, anchor="w").grid(row=3, column=0, sticky="w")
+        tk.Entry(tab_rename, textvariable=self.rename_cell_var, width=20).grid(row=3, column=1, sticky="w")
         tk.Label(
             tab_rename, text="連番を使うルールは A1 のような1セル、行のセル値を使うルールは開始セルを指定します。",
             anchor="w",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        tk.Button(tab_rename, text="リネームを実行", width=14, command=self.run_rename).grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        tk.Button(tab_rename, text="リネームを実行", width=14, command=self.run_rename).grid(row=5, column=0, sticky="w", pady=(8, 0))
 
         list_frame = tk.Frame(root, padx=16, pady=8)
         list_frame.pack(fill="both", expand=True)
@@ -191,6 +209,7 @@ class UnifiedPdfSplitApp:
         for variable in (
             self.pdf_var, self.folder_var, self.excel_var, self.sheet_var, self.output_var,
             self.base_cell_var, self.per_cell_var, self.rename_cell_var, self.rename_rule_var,
+            self.rename_target_var,
         ):
             variable.trace_add("write", self.invalidate_preview)
         # 結合後ファイル名はユーザーが編集した瞬間に「自動補完値」ではなくなる（FR-M5）
@@ -314,16 +333,16 @@ class UnifiedPdfSplitApp:
                 messagebox.showwarning("入力が足りません", f"{'、'.join(missing)} を指定してください。")
                 return False
             return True
-        missing = [
-            label
-            for label, value in (
-                ("入力フォルダー", self.folder_var.get()),
-                ("Excelファイル", self.excel_var.get()),
-                ("シート", self.sheet_var.get()),
-                ("セル番地", self.rename_cell_var.get()),
-            )
-            if not value.strip()
+        copy_mode = self.rename_target_var.get() == RENAME_TARGET_COPY
+        required = [
+            ("入力フォルダー", self.folder_var.get()),
+            ("Excelファイル", self.excel_var.get()),
+            ("シート", self.sheet_var.get()),
+            ("セル番地", self.rename_cell_var.get()),
         ]
+        if copy_mode:  # FR-R16: 出力先へコピーする場合は出力先フォルダーが必須
+            required.append(("出力先フォルダー", self.output_var.get()))
+        missing = [label for label, value in required if not value.strip()]
         if missing:
             messagebox.showwarning("入力が足りません", f"{'、'.join(missing)} を指定してください。")
             return False
@@ -362,6 +381,14 @@ class UnifiedPdfSplitApp:
             self.rename_cell_var.get().strip(),
             modes.RENAME_RULES[self.rename_rule_var.get()],
         )
+
+    def rename_target(self) -> str:
+        """リネームの適用先（その場で改名 / 出力先へコピー）を返す（FR-R16）."""
+        return self.rename_target_var.get()
+
+    def rename_copy_folder(self) -> Path:
+        """コピー先フォルダー（FR-R16: 共通欄の「出力先フォルダー」を使う）."""
+        return Path(self.output_var.get().strip())
 
     # --- プレビュー一覧 ---------------------------------------------------
     def invalidate_preview(self, *_args) -> None:
@@ -426,11 +453,15 @@ class UnifiedPdfSplitApp:
                 )
             else:
                 folder, excel_path, sheet_name, cell, mode = self.rename_inputs()
-                rows = preview.build_rename_preview(folder, excel_path, sheet_name, cell, mode)
+                copy_mode = self.rename_target() == RENAME_TARGET_COPY
+                out_folder = self.rename_copy_folder() if copy_mode else None
+                rows = preview.build_rename_preview(folder, excel_path, sheet_name, cell, mode, out_folder, copy_mode)
                 unchanged = sum(1 for row in rows if row.unchanged)
+                action = "コピー" if copy_mode else "名前変更"
                 self._show_rows(
                     rows,
-                    f"プレビュー: {len(rows)} 件（変更 {len(rows) - unchanged} / 変更不要 {unchanged}、名前変更は行っていません）",
+                    f"プレビュー: {len(rows)} 件（{action} {len(rows) - unchanged} / 変更不要 {unchanged}、"
+                    f"{action}は行っていません）",
                 )
         except Exception as exc:
             self.invalidate_preview()
@@ -479,10 +510,13 @@ class UnifiedPdfSplitApp:
         )
 
     def run_rename(self) -> None:
-        """リネームタブの実行（FR-R12: 変更件数と変更不要件数を報告）."""
+        """リネームタブの実行（FR-R12: 件数報告 / FR-R16: 適用先で分岐）."""
         if not self.check_inputs(TAB_RENAME):
             return
         folder, excel_path, sheet_name, cell, mode = self.rename_inputs()
+        if self.rename_target() == RENAME_TARGET_COPY:
+            self.run_rename_copy(folder, excel_path, sheet_name, cell, mode)
+            return
         try:
             items = rename_core.build_rename_plan(folder, excel_path, sheet_name, cell, mode)
             rename_core.check_rename_plan(items, folder)
@@ -495,6 +529,24 @@ class UnifiedPdfSplitApp:
         messagebox.showinfo(
             "完了",
             f"変更 {result.renamed} 件 / 変更不要 {result.unchanged} 件\nフォルダー: {folder}",
+        )
+
+    def run_rename_copy(self, folder: Path, excel_path: Path, sheet_name: str, cell: str, mode: str) -> None:
+        """出力先フォルダーへコピーしながら名前を変える（FR-R16: 入力フォルダーのPDFは無傷のまま）."""
+        out_folder = self.rename_copy_folder()
+        try:
+            items = rename_core.build_rename_plan(folder, excel_path, sheet_name, cell, mode)
+            plan = rename_core.build_copy_plan(items, out_folder)
+            rename_core.check_copy_plan(plan, out_folder)
+            result = rename_core.apply_copies(plan)
+        except Exception as exc:
+            self.invalidate_preview()
+            messagebox.showerror("コピーできませんでした", str(exc))
+            return
+        self.invalidate_preview()
+        messagebox.showinfo(
+            "完了",
+            f"コピー {result.copied} 件 / 変更不要 {result.unchanged} 件\n入力: {folder}\n出力: {out_folder}",
         )
 
 

@@ -393,6 +393,53 @@ def main() -> int:
             app.run_rename()
             check("変更 0 件 / 変更不要 3 件" in dialogs["info"][-1][1],
                   "FR-R8 同じ条件で再実行すると全て変更不要（上書きしない）")
+
+            # --- FR-R16〜FR-R18: 出力先へコピーしながら改名する ---
+            copy_in = work / "copy_in"
+            copy_in.mkdir()
+            for name in ("2_a.pdf", "8_b.pdf"):
+                make_pdf(copy_in / name, 1)
+            copy_out = work / "copy_out"
+            copy_out.mkdir()
+            output_before = app.output_var.get()
+            app.folder_var.set(str(copy_in))
+            app.excel_var.set(str(rename_xlsx))
+            app.output_var.set(str(copy_out))
+            app.rename_target_var.set(gui.RENAME_TARGET_COPY)
+            check(app.rename_target() == gui.RENAME_TARGET_COPY and app.rename_copy_folder() == copy_out,
+                  "FR-R16 適用先radio（出力先へコピー）→ 共通欄の出力先フォルダーを使う")
+            dialogs["warning"].clear()
+            app.output_var.set("")
+            app.run_rename()
+            check(bool(dialogs["warning"]) and "出力先フォルダー" in dialogs["warning"][-1][1]
+                  and list(copy_out.iterdir()) == [],
+                  "FR-R16 出力先未指定なら警告して実行しない（コピーは始まらない）")
+            app.output_var.set(str(copy_out))
+            app.run_preview()
+            copy_rows = [app.preview_tree.item(row, "values") for row in app.preview_tree.get_children()]
+            check([row[2] for row in copy_rows] == ["報告書_001.pdf", "報告書_002.pdf"]
+                  and list(copy_out.iterdir()) == []
+                  and "コピー 2 / 変更不要 0" in app.status_label.cget("text"),
+                  f"FR-R11/FR-R16 コピーのプレビューでも書き出しはしない: {app.status_label.cget('text')}")
+            dialogs["info"].clear()
+            app.run_rename()
+            check(bool(dialogs["info"]) and "コピー 2 件 / 変更不要 0 件" in dialogs["info"][-1][1]
+                  and sorted(p.name for p in copy_in.iterdir()) == ["2_a.pdf", "8_b.pdf"]
+                  and sorted(p.name for p in copy_out.iterdir()) == ["報告書_001.pdf", "報告書_002.pdf"],
+                  "FR-R16 完了報告にコピー件数、入力のPDFは無傷で出力先に新しい名前が揃う")
+            check(all((copy_out / name).stat().st_size == (copy_in / src).stat().st_size
+                      and len(PdfReader(copy_out / name).pages) == 1
+                      for name, src in (("報告書_001.pdf", "2_a.pdf"), ("報告書_002.pdf", "8_b.pdf"))),
+                  "FR-R18 出力先の各ファイルは元ファイルと同じサイズで読み取れる")
+            dialogs["error"].clear()
+            app.run_rename()
+            check(bool(dialogs["error"]) and "出力先に同じ名前のファイルが既にあります" in dialogs["error"][-1][1]
+                  and sorted(p.name for p in copy_out.iterdir()) == ["報告書_001.pdf", "報告書_002.pdf"],
+                  "FR-R17 出力先に既存名があると実行前に中止し、上書きしていない")
+            app.rename_target_var.set(gui.RENAME_TARGET_INPLACE)
+            app.folder_var.set(str(rename_in))
+            app.output_var.set(output_before)
+
             app.run_preview()  # 一覧に行を出した状態でタブを切り、消えることを確かめる
             app.notebook.select(2)
             root.update()  # タブ切替イベント（一覧を消す処理）を処理させる

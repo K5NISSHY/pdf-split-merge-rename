@@ -24,6 +24,9 @@ DOT_TEMP_PREFIXES = (".pdf_split_", ".pdf_merge_", ".pdf_rename_")
 TILDE_TEMP_PREFIXES = tuple("~" + prefix[1:] for prefix in DOT_TEMP_PREFIXES)
 TEMP_NAME_PREFIXES = DOT_TEMP_PREFIXES + TILDE_TEMP_PREFIXES
 
+# 「出力先へコピーして改名」で使う一時ファイルの接頭辞（`.pdf_rename_` を含むので一覧からも除外される）
+COPY_TEMP_PREFIX = ".pdf_rename_copy_"
+
 # SMB共有で一時的に起きるエラーだけ再試行する（5=アクセス拒否は再試行しても同じなので除く）
 RETRYABLE_WINERRORS = frozenset({32, 33, 64})
 RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)  # 名前変更の再試行間隔（合計 約3.75秒）
@@ -135,6 +138,24 @@ def move_into(source: Path, destination: Path) -> None:
         # 元ファイルを消せなければ「同じ名前が2個」になるため、失敗として扱う
         assert last_error is not None
         raise last_error from None
+
+
+def copy_into(source: Path, destination: Path) -> None:
+    """ファイルをコピーして宛名に置く。既存ファイルへの上書きは行わない.
+
+    共有では「コピーしたのに残っていない」が起きうるため、同じフォルダー内の
+    一時名で受け取ってから `move_into` で名前を動かす。元ファイルは変更しない。
+    """
+    if destination.exists():
+        raise FileExistsError(f"宛先に既にファイルがあります。上書きは行いません。\n{destination.name}")
+    temp = temp_paths_for(destination.parent, COPY_TEMP_PREFIX, 1)[0]
+    try:
+        with source.open("rb") as source_stream:
+            write_exclusive(temp, lambda stream: shutil.copyfileobj(source_stream, stream))
+        move_into(temp, destination)
+    finally:
+        if temp.exists():
+            remove_file(temp)
 
 
 def remove_file(path: Path) -> None:
